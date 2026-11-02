@@ -12,10 +12,13 @@ export function syncWordsText(text: string, incoming: readonly string[], user: {
   return sameWords(text, incoming) ? text : incoming.join(", ");
 }
 
-/** Edit flags after the field's `disabled` changes: a disabled textarea never fires blur, so clear them. */
+/**
+ * Edit flags after the field's `disabled` changes. A disabled textarea never fires blur, so focus is
+ * cleared; unsaved edits are kept (disabled flips on every brief reconnect, and typed text must survive).
+ */
 export function editStateWhen(
   disabled: boolean | undefined,
   user: { focused: boolean; edited: boolean },
 ): { focused: boolean; edited: boolean } {
-  return disabled ? { focused: false, edited: false } : user;
+  return disabled ? { focused: false, edited: user.edited } : user;
 }

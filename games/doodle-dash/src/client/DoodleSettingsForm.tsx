@@ -12,10 +12,21 @@ export function DoodleSettingsForm({ settings, onChange, disabled }: SettingsFor
   // Room messages bring a new array every time; only react when the words themselves change.
   const incoming = settings.customWords.join("\n");
   useEffect(() => {
-    // Disabling the textarea while focused fires no blur, so the edit flags would otherwise stick.
+    // Disabling the textarea while focused fires no blur, so focus would otherwise stick.
     user.current = editStateWhen(disabled, user.current);
     setWords((w) => syncWordsText(w, incoming ? incoming.split("\n") : [], user.current));
   }, [incoming, disabled]);
+  // Re-enabled (e.g. reconnected) with edits that never got a blur: send them now.
+  const wasDisabled = useRef(disabled);
+  useEffect(() => {
+    const reenabled = wasDisabled.current && !disabled;
+    wasDisabled.current = disabled;
+    if (reenabled && user.current.edited && !user.current.focused) {
+      user.current = { focused: false, edited: false };
+      onChange({ ...settings, customWords: splitWords(words) });
+    }
+    // Only a disabled -> enabled transition should send; settings/words are read at that moment.
+  }, [disabled]);
 
   return (
     <div className="dd-settings">

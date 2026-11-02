@@ -33,12 +33,18 @@ describe("editStateWhen", () => {
     expect(editStateWhen(false, user)).toBe(user);
   });
 
-  it("clears the edit flags once the field is disabled (no blur fires then)", () => {
-    expect(editStateWhen(true, { focused: true, edited: true })).toEqual({ focused: false, edited: false });
+  it("clears focus once the field is disabled (no blur fires then) but keeps unsaved edits", () => {
+    expect(editStateWhen(true, { focused: true, edited: true })).toEqual({ focused: false, edited: true });
+    expect(editStateWhen(true, { focused: true, edited: false })).toEqual({ focused: false, edited: false });
   });
 
-  it("lets the room's words through after the field is disabled mid-edit", () => {
+  it("keeps the user's typed text through a room update while disabled mid-edit", () => {
     const user = editStateWhen(true, { focused: true, edited: true });
-    expect(syncWordsText("half typ", ["cat"], user)).toBe("cat");
+    expect(syncWordsText("half typ", ["cat"], user)).toBe("half typ");
+  });
+
+  it("follows the room again after being disabled while focused without edits", () => {
+    const user = editStateWhen(true, { focused: true, edited: false });
+    expect(syncWordsText("old", ["cat"], user)).toBe("cat");
   });
 });
