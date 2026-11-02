@@ -11,6 +11,7 @@ export const DRAWER_GRACE_MS = 10_000;
 export const MAX_POINTS_PER_BATCH = 400; // numbers (x,y pairs × 2)
 export const INK_LIMIT = 200_000; // numbers per turn
 export const FEED_KEEP = 60;
+export const VIEW_FEED_LIMIT = 30; // feed items sent to each viewer
 
 export type Difficulty = "easy" | "medium" | "hard" | "mixed";
 export interface DoodleSettings { rounds: number; drawTime: number; difficulty: Difficulty; customWords: string[] }

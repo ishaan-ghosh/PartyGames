@@ -1,4 +1,5 @@
-import { isCloseGuess, normalizeGuess, type ActionResult } from "@party/shared";
+import type { ActionResult } from "@party/shared";
+import { matchGuess } from "./chars";
 import { allGuessed, endTurn, nameOf, pushFeed } from "./turns";
 import type { DoodleState } from "./types";
 
@@ -15,7 +16,8 @@ export function handleGuess(s: DoodleState, playerId: string, text: string, now:
     pushFeed(s, { kind: "chat", playerId, text: clean, audience: "solvers" });
     return { state: s };
   }
-  if (normalizeGuess(clean) === normalizeGuess(s.word)) {
+  const match = matchGuess(clean, s.word);
+  if (match === "correct") {
     const timeLeft = Math.max(0, s.phaseEndsAt - now);
     const points = Math.round(500 * (timeLeft / (s.settings.drawTime * 1000))) + 50;
     s.scores[playerId] = (s.scores[playerId] ?? 0) + points;
@@ -25,8 +27,13 @@ export function handleGuess(s: DoodleState, playerId: string, text: string, now:
     if (allGuessed(s)) endTurn(s, now);
     return { state: s };
   }
+  if (match === "contains") {
+    // Wrong, but it would give the word away, so only the guesser sees it.
+    pushFeed(s, { kind: "chat", playerId, text: clean, audience: { only: playerId } });
+    return { state: s };
+  }
   pushFeed(s, { kind: "chat", playerId, text: clean, audience: "all" });
-  if (isCloseGuess(clean, s.word)) {
+  if (match === "close") {
     pushFeed(s, { kind: "close", playerId, text: `"${clean}" is close!`, audience: { only: playerId } });
   }
   return { state: s };

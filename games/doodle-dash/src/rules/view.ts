@@ -1,5 +1,6 @@
 import type { Avatar, Viewer } from "@party/shared";
-import type { Audience, DoodleState, FeedItem, Phase, Stroke } from "./types";
+import { isLetter, isMark } from "./chars";
+import { VIEW_FEED_LIMIT, type Audience, type DoodleState, type FeedItem, type Phase, type Stroke } from "./types";
 
 export type ViewFeedItem = Omit<FeedItem, "audience">;
 export interface DoodleView {
@@ -21,7 +22,18 @@ export interface DoodleView {
 }
 
 export function makeHint(word: string, revealed: number[]): string {
-  return [...word].map((ch, i) => (/[a-z0-9]/i.test(ch) && !revealed.includes(i) ? "_" : ch)).join("");
+  let baseShown = true;
+  return [...word]
+    .map((ch, i) => {
+      if (isLetter(ch)) {
+        baseShown = revealed.includes(i);
+        return baseShown ? ch : "_";
+      }
+      if (isMark(ch)) return baseShown ? ch : "_";
+      baseShown = true;
+      return ch;
+    })
+    .join("");
 }
 
 export function view(s: DoodleState, viewer: Viewer): DoodleView {
@@ -58,7 +70,7 @@ export function view(s: DoodleState, viewer: Viewer): DoodleView {
       playerId === null
         ? null
         : { id: playerId, role: !inGame ? "spectator" : isDrawer ? "drawer" : solved ? "solver" : "guesser" },
-    feed: s.feed.filter((f) => canSee(f.audience)).slice(-30).map(({ audience: _hidden, ...rest }) => rest),
+    feed: s.feed.filter((f) => canSee(f.audience)).slice(-VIEW_FEED_LIMIT).map(({ audience: _hidden, ...rest }) => rest),
     strokes: s.strokes,
     opSeq: s.opSeq,
   };

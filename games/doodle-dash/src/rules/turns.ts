@@ -1,5 +1,9 @@
 import { Rng, type ActionResult, type PlayerInfo } from "@party/shared";
+import { isLetter } from "./chars";
 import { wordPool } from "./settings";
+
+/** Words kept out of the choices when the word pool is exhausted and starts over. */
+const RECENT_WORDS_KEPT = 10;
 import {
   CHOOSE_MS, DRAWER_GRACE_MS, FEED_KEEP, REVEAL_MS,
   type DoodleSettings, type DoodleState, type FeedItem,
@@ -15,7 +19,7 @@ export function pushFeed(s: DoodleState, item: Omit<FeedItem, "id">): void {
 }
 
 export function letterIndices(word: string): number[] {
-  return [...word].flatMap((ch, i) => (/[a-z0-9]/i.test(ch) ? [i] : []));
+  return [...word].flatMap((ch, i) => (isLetter(ch) ? [i] : []));
 }
 
 export function hintSchedule(word: string, start: number, durationMs: number): number[] {
@@ -27,7 +31,7 @@ export function hintSchedule(word: string, start: number, durationMs: number): n
 export function setup(players: PlayerInfo[], settings: DoodleSettings, seed: number, now: number): DoodleState {
   const s: DoodleState = {
     seed,
-    settings,
+    settings: { ...settings, customWords: [...settings.customWords] },
     players: players.map((p) => ({ id: p.id, name: p.name, avatar: p.avatar })),
     scores: Object.fromEntries(players.map((p) => [p.id, 0])),
     connected: Object.fromEntries(players.map((p) => [p.id, p.connected])),
@@ -56,13 +60,19 @@ export function setup(players: PlayerInfo[], settings: DoodleSettings, seed: num
   return startTurn(s, now);
 }
 
+function unusedWords(pool: string[], usedWords: string[]): string[] {
+  const used = new Set(usedWords.map((w) => w.toLowerCase()));
+  return pool.filter((w) => !used.has(w.toLowerCase()));
+}
+
 function availableWords(s: DoodleState): string[] {
-  const used = new Set(s.usedWords.map((w) => w.toLowerCase()));
   const pool = wordPool(s.settings);
-  const fresh = pool.filter((w) => !used.has(w.toLowerCase()));
+  const fresh = unusedWords(pool, s.usedWords);
   if (fresh.length >= 3) return fresh;
-  s.usedWords = [];
-  return pool;
+  // Pool exhausted: start over, but keep the most recent words out of the next choices.
+  const keep = Math.max(0, Math.min(pool.length - 3, RECENT_WORDS_KEPT));
+  s.usedWords = keep > 0 ? s.usedWords.slice(-keep) : [];
+  return unusedWords(pool, s.usedWords);
 }
 
 export function startTurn(s: DoodleState, now: number): DoodleState {
