@@ -1,13 +1,13 @@
 import { Rng, type ActionResult, type PlayerInfo } from "@party/shared";
 import { isLetter } from "./chars";
 import { wordPool } from "./settings";
-
-/** Words kept out of the choices when the word pool is exhausted and starts over. */
-const RECENT_WORDS_KEPT = 10;
 import {
   CHOOSE_MS, DRAWER_GRACE_MS, FEED_KEEP, MIN_CONNECTED, REVEAL_MS,
   type DoodleSettings, type DoodleState, type FeedItem,
 } from "./types";
+
+/** Words kept out of the choices when the word pool is exhausted and starts over. */
+const RECENT_WORDS_KEPT = 10;
 
 export function nameOf(s: DoodleState, id: string): string {
   return s.players.find((p) => p.id === id)?.name ?? "Someone";
@@ -157,9 +157,14 @@ export function connectedCount(s: DoodleState): number {
   return s.players.filter((p) => s.connected[p.id]).length;
 }
 
-/** True when the turn that just ended was the last one of the last round. */
+/**
+ * True when the turn that just ended was the last one that can be played: we're in the
+ * last round and no player left to draw in it (at or after turnIndex + 1) is connected.
+ * startTurn would skip them all and end the game, so there is nothing to wait for.
+ */
 function lastTurnPlayed(s: DoodleState): boolean {
-  return s.turnIndex + 1 >= s.turnOrder.length && s.round >= s.settings.rounds;
+  if (s.round < s.settings.rounds) return false;
+  return s.turnOrder.slice(s.turnIndex + 1).every((id) => !s.connected[id]);
 }
 
 export function nextTurn(s: DoodleState, now: number): DoodleState {

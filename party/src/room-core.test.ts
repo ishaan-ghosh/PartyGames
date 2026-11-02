@@ -257,6 +257,29 @@ describe("RoomCore: host commands and games", () => {
     expect(h.last("c1", "room")!.room.belowMin).toBe(true);
   });
 
+  it("finishes the game when a reconnect ends it", () => {
+    const h = setup();
+    // Same as counter, but a player coming back ends the game (like a resumed final round with no drawers left).
+    h.deps.games.endsOnReturn = {
+      ...counter,
+      id: "endsOnReturn",
+      onPresence: (s: CState, _id: string, connected: boolean) => (connected ? { ...s, count: s.target } : s),
+    } as typeof counter;
+    h.screen("s1", { hostKey: "HOSTKEY" });
+    h.player("c1", "Ana");
+    h.player("c2", "Ben");
+    h.host("s1", { cmd: "selectGame", gameId: "endsOnReturn" });
+    h.host("s1", { cmd: "start" }, 0);
+    const token = h.last("c2", "welcome")!.token;
+    h.core.disconnect("c2", 5);
+    expect(h.last("c1", "room")!.room.phase).toBe("playing");
+    h.player("c3", "Ben", { token }, 6);
+    const room = h.last("c1", "room")!.room;
+    expect(room.phase).toBe("lobby");
+    expect(room.lastResults).toEqual(expect.any(Array));
+    expect(h.core.serialize().gameState).toBeNull();
+  });
+
   it("kicks a player but never the host", () => {
     const h = lobby();
     h.host("s1", { cmd: "kick", playerId: h.id("c2") });
