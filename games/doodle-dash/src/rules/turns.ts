@@ -182,9 +182,10 @@ export function nextTurn(s: DoodleState, now: number): DoodleState {
 }
 
 /**
- * Starts the next turn if the game is paused between turns and enough players are
- * connected again. The module's onPresence must call this after marking a player
- * connected. Returns true when a turn was started.
+ * Leaves the between-turns pause: starts the next turn once enough players are
+ * connected again, or ends the game if nothing is left to play in the final round.
+ * The module's onPresence must call this after marking a player connected.
+ * Returns true when the game moved on (a turn started or the game ended).
  */
 export function resumeIfReady(s: DoodleState, now: number): boolean {
   if (!s.paused) return false;
