@@ -1,7 +1,7 @@
 import type { SettingsFormProps } from "@party/ui";
 import { useEffect, useRef, useState } from "react";
 import type { DoodleSettings } from "../rules";
-import { splitWords, syncWordsText } from "./settings";
+import { editStateWhen, splitWords, syncWordsText } from "./settings";
 
 const DRAW_TIMES = [30, 45, 60, 80, 100, 120, 150, 180];
 const DIFFICULTIES = ["easy", "medium", "hard", "mixed"] as const;
@@ -12,8 +12,10 @@ export function DoodleSettingsForm({ settings, onChange, disabled }: SettingsFor
   // Room messages bring a new array every time; only react when the words themselves change.
   const incoming = settings.customWords.join("\n");
   useEffect(() => {
+    // Disabling the textarea while focused fires no blur, so the edit flags would otherwise stick.
+    user.current = editStateWhen(disabled, user.current);
     setWords((w) => syncWordsText(w, incoming ? incoming.split("\n") : [], user.current));
-  }, [incoming]);
+  }, [incoming, disabled]);
 
   return (
     <div className="dd-settings">

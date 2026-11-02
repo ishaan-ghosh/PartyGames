@@ -11,3 +11,11 @@ export function syncWordsText(text: string, incoming: readonly string[], user: {
   if (user.focused || user.edited) return text;
   return sameWords(text, incoming) ? text : incoming.join(", ");
 }
+
+/** Edit flags after the field's `disabled` changes: a disabled textarea never fires blur, so clear them. */
+export function editStateWhen(
+  disabled: boolean | undefined,
+  user: { focused: boolean; edited: boolean },
+): { focused: boolean; edited: boolean } {
+  return disabled ? { focused: false, edited: false } : user;
+}

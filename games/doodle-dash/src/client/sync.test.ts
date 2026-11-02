@@ -17,9 +17,17 @@ const base: SyncInput = {
 };
 
 describe("shouldAdoptView: viewers", () => {
-  it("adopts a view that is as new as the live ops already applied", () => {
-    expect(shouldAdoptView({ ...base, viewOpSeq: 5, localSeq: 5 })).toBe(true);
+  it("adopts a view that is newer than the live ops already applied", () => {
     expect(shouldAdoptView({ ...base, viewOpSeq: 9, localSeq: 5 })).toBe(true);
+  });
+
+  it("skips a view at the same op seq with the same shape (avoids a full redraw)", () => {
+    expect(shouldAdoptView({ ...base, viewOpSeq: 5, localSeq: 5 })).toBe(false);
+  });
+
+  it("adopts a view at the same op seq whose shape differs from the local list", () => {
+    expect(shouldAdoptView({ ...base, viewOpSeq: 5, localSeq: 5, viewStrokes: [pen(1, [0, 0, 1, 1])] })).toBe(true);
+    expect(shouldAdoptView({ ...base, viewOpSeq: 5, localSeq: 5, viewStrokes: [pen(1, [0, 0]), pen(2, [1, 1])] })).toBe(true);
   });
 
   it("keeps the local list when live ops are already ahead of the view", () => {
@@ -57,6 +65,10 @@ describe("shouldAdoptView: drawer", () => {
   it("does not resync from a view that may predate actions still in flight", () => {
     expect(shouldAdoptView({ ...drawer, viewStrokes: [], msSinceLastSend: QUIET_MS - 1 })).toBe(false);
     expect(shouldAdoptView({ ...drawer, viewStrokes: [], msSinceLastSend: QUIET_MS })).toBe(true);
+  });
+
+  it("waits longer than the outbox's 2 s action TTL before trusting a view", () => {
+    expect(QUIET_MS).toBeGreaterThan(2000);
   });
 
   it("always adopts on a new turn", () => {

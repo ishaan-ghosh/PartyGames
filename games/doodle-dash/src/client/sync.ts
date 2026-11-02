@@ -2,9 +2,10 @@ import type { Stroke } from "../rules";
 
 /**
  * A drawer only trusts a view received at least this long after its last stroke action: anything
- * sooner may predate actions still in flight (or still queued in the outbox, whose TTL is 2 s).
+ * sooner may predate actions still in flight (or still queued in the outbox). Must exceed the
+ * outbox's 2 s action TTL, or a view older than a just-flushed action could be adopted.
  */
-export const QUIET_MS = 1500;
+export const QUIET_MS = 2500;
 
 export interface SyncInput {
   /** The local user is the drawer and keeps an optimistic stroke list. */
@@ -33,7 +34,12 @@ function signature(strokes: readonly Stroke[]): string {
 /** Whether to replace the local stroke list with a view's authoritative snapshot. */
 export function shouldAdoptView(i: SyncInput): boolean {
   if (i.turnChanged) return true;
-  if (!i.ownsCanvas) return i.viewOpSeq >= i.localSeq;
+  // Viewer: a newer view always wins. At the same op seq, adopt only if the shapes differ: adopting an
+  // identical list would hand the renderer new stroke objects and force a full redraw (fills included).
+  if (!i.ownsCanvas) {
+    if (i.viewOpSeq > i.localSeq) return true;
+    return i.viewOpSeq === i.localSeq && signature(i.viewStrokes) !== signature(i.localStrokes);
+  }
   // Drawer: resync only when idle and the server's list has a different shape, e.g. after the
   // outbox dropped actions during a reconnect or the server refused ink past its limit.
   if (i.drawing || i.pendingPoints > 0 || i.msSinceLastSend < QUIET_MS) return false;

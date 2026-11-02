@@ -11,7 +11,8 @@
 .dd-canvas-wrap { position: relative; width: 100%; border-radius: var(--radius-lg); overflow: hidden; box-shadow: var(--shadow); background: #fff; }
 /* The canvas takes the largest 4:3 box that fits whatever space its cell has: no vh arithmetic. */
 .dd-canvas-cell { min-height: 0; min-width: 0; display: grid; place-items: center; container-type: size; }
-.dd-screen .dd-canvas-wrap { width: min(100cqw, 100cqh * 4 / 3); aspect-ratio: 4 / 3; }
+/* vh fallback first for browsers without container query units (iOS < 16, older TV browsers). */
+.dd-screen .dd-canvas-wrap { width: min(100%, (100vh - 280px) * 4 / 3); width: min(100cqw, 100cqh * 4 / 3); aspect-ratio: 4 / 3; }
 .dd-canvas { display: block; width: 100%; height: auto; aspect-ratio: 4 / 3; background: #fff; -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
 .dd-canvas-draw { touch-action: none; border-radius: var(--radius); box-shadow: var(--shadow); cursor: crosshair; }
 .dd-overlay { position: absolute; inset: 0; display: grid; place-content: center; justify-items: center; gap: var(--space-3); padding: var(--space-4); text-align: center; background: rgba(15, 14, 23, 0.84); color: var(--text); font: 600 1.5rem var(--font-display); animation: dd-fade 0.3s ease-out; }
@@ -69,7 +70,7 @@
   overscroll-behavior: none;
 }
 .dd-phone-draw .dd-pad { min-height: 0; grid-template-rows: minmax(0, 1fr) auto auto; gap: var(--space-2); }
-.dd-phone-draw .dd-canvas-draw { max-width: 100%; max-height: 100%; width: min(100cqw, 100cqh * 4 / 3); height: auto; }
+.dd-phone-draw .dd-canvas-draw { max-width: 100%; max-height: 100%; width: min(100%, (100vh - 260px) * 4 / 3); width: min(100cqw, 100cqh * 4 / 3); height: auto; }
 html.dd-no-overscroll, html.dd-no-overscroll body { overscroll-behavior: none; }
 .dd-secret { margin: 0; text-align: center; font: 600 1.15rem var(--font-display); }
 .dd-secret strong { color: var(--warn); font-size: 1.6rem; }

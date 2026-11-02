@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { splitWords, syncWordsText } from "./settings";
+import { editStateWhen, splitWords, syncWordsText } from "./settings";
 
 describe("splitWords", () => {
   it("splits on commas and drops blanks", () => {
@@ -24,5 +24,21 @@ describe("syncWordsText", () => {
 
   it("never replaces unsaved edits", () => {
     expect(syncWordsText("unsaved", ["cat"], { focused: false, edited: true })).toBe("unsaved");
+  });
+});
+
+describe("editStateWhen", () => {
+  it("keeps the user's edit flags while the field is enabled", () => {
+    const user = { focused: true, edited: true };
+    expect(editStateWhen(false, user)).toBe(user);
+  });
+
+  it("clears the edit flags once the field is disabled (no blur fires then)", () => {
+    expect(editStateWhen(true, { focused: true, edited: true })).toEqual({ focused: false, edited: false });
+  });
+
+  it("lets the room's words through after the field is disabled mid-edit", () => {
+    const user = editStateWhen(true, { focused: true, edited: true });
+    expect(syncWordsText("half typ", ["cat"], user)).toBe("cat");
   });
 });
