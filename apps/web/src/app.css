@@ -6,7 +6,7 @@
 .code-input { font: 700 2.2rem var(--font-display); letter-spacing: 0.4em; text-align: center; text-transform: uppercase; }
 .host-row { display: grid; gap: var(--space-3); width: 100%; }
 .room-code-md { font-size: 3rem; letter-spacing: 0.2em; }
-.emoji-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(48px, 1fr)); gap: var(--space-2); }
+.emoji-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: var(--space-2); }
 .emoji-btn { aspect-ratio: 1; min-width: 48px; min-height: 48px; border-radius: 50%; border: 0; background: var(--bg-raised-2); font-size: 1.4rem; cursor: pointer; transition: transform 0.2s var(--ease-spring); }
 .emoji-btn.on { transform: scale(1.15); }
 .color-row { display: flex; gap: var(--space-2); justify-content: center; flex-wrap: wrap; }
@@ -14,4 +14,6 @@
 .color-dot.on { border-color: var(--text); }
 .fatal { display: grid; gap: var(--space-4); justify-items: center; max-width: 420px; }
 .fatal-emoji { font-size: 3rem; }
+/* 8 columns need ~436px of card content: (436 - 7×4px gap) / 8 ≈ 51px cells, still ≥ 48px. */
+@media (min-width: 520px) { .emoji-grid { grid-template-columns: repeat(8, 1fr); gap: var(--space-1); } }
 .loading { color: var(--text-dim); font: 600 1.4rem var(--font-display); }

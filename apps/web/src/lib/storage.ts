@@ -1,6 +1,7 @@
 import type { Avatar } from "@party/shared";
 
 export interface Profile { name: string; avatar: Avatar }
+export type Role = "screen" | "player";
 
 const safe = {
   get(k: string): string | null {
@@ -15,9 +16,16 @@ const safe = {
 };
 
 export const storage = {
-  getToken: (code: string) => safe.get(`pg:token:${code}`),
-  setToken: (code: string, token: string) => safe.set(`pg:token:${code}`, token),
-  clearToken: (code: string) => safe.del(`pg:token:${code}`),
+  // Tokens are scoped by role, so a device never reclaims its player seat while joining as a screen.
+  getToken: (code: string, role: Role) => safe.get(`pg:token:${code}:${role}`),
+  setToken: (code: string, role: Role, token: string) => safe.set(`pg:token:${code}:${role}`, token),
+  clearToken: (code: string, role: Role) => safe.del(`pg:token:${code}:${role}`),
+  /** Forget everything stored for a room code (e.g. the room is gone and the code may be reused). */
+  clearRoom(code: string): void {
+    for (const k of [`pg:token:${code}:player`, `pg:token:${code}:screen`, `pg:hostKey:${code}`, `pg:role:${code}`]) {
+      safe.del(k);
+    }
+  },
   getHostKey: (code: string) => safe.get(`pg:hostKey:${code}`),
   setHostKey: (code: string, key: string) => safe.set(`pg:hostKey:${code}`, key),
   getRole(code: string): "screen" | "player" | null {

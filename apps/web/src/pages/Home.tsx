@@ -1,7 +1,7 @@
-import { isRoomCode, normalizeRoomCode } from "@party/shared";
 import { Button } from "@party/ui";
 import { useState, type FormEvent } from "react";
 import { useLocation } from "wouter";
+import { codeInputError, sanitizeCodeInput } from "../lib/roomCode";
 import { storage } from "../lib/storage";
 
 export function Home() {
@@ -29,9 +29,10 @@ export function Home() {
 
   function join(e: FormEvent) {
     e.preventDefault();
-    const c = normalizeRoomCode(code);
-    if (!isRoomCode(c)) {
-      setError("Room codes are 4 letters.");
+    const c = sanitizeCodeInput(code);
+    const invalid = codeInputError(c);
+    if (invalid) {
+      setError(invalid);
       return;
     }
     storage.setRole(c, "player");
@@ -49,12 +50,16 @@ export function Home() {
             data-testid="join-code"
             className="code-input"
             value={code}
-            maxLength={4}
             autoCapitalize="characters"
             autoComplete="off"
             spellCheck={false}
             placeholder="ABCD"
-            onChange={(e) => setCode(e.target.value.toUpperCase())}
+            onChange={(e) => {
+              // Sanitize instead of maxLength, so pasting " abcd" still yields "ABCD".
+              const next = sanitizeCodeInput(e.target.value);
+              setCode(next);
+              setError(/[ILO]/.test(next) ? codeInputError(next) : null);
+            }}
           />
         </label>
         <Button type="submit" size="xl" data-testid="join-go">Join</Button>

@@ -10,7 +10,7 @@ import { JoinForm } from "./JoinForm";
 function initialHello(code: string): HelloInfo | null {
   if (storage.getRole(code) === "screen") return { role: "screen" };
   const profile = storage.getProfile();
-  return storage.getToken(code) && profile ? { role: "player", ...profile } : null;
+  return storage.getToken(code, "player") && profile ? { role: "player", ...profile } : null;
 }
 
 export function RoomPage({ code: raw }: { code: string }) {
