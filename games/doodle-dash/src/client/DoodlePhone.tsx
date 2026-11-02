@@ -11,7 +11,7 @@ export function DoodlePhone(p: GameClientProps<DoodleView>) {
   const send = (a: DoodleAction) => p.send(a);
   const role = view.you?.role ?? "spectator";
   const isDrawer = role === "drawer";
-  const [strokes, setStrokes] = useStrokes(view, onEvent, isDrawer && view.phase === "drawing");
+  const [strokes, setStrokes, activity] = useStrokes(view, onEvent, isDrawer && view.phase === "drawing");
   useDoodleSounds(view, p.soundOn, serverNow);
   const me = view.players.find((x) => x.id === p.you.id);
   const drawer = view.players.find((x) => x.id === view.drawerId);
@@ -56,7 +56,7 @@ export function DoodlePhone(p: GameClientProps<DoodleView>) {
       <div className="phone dd-phone dd-phone-draw">
         {header}
         <p className="dd-secret">Draw: <strong data-testid="secret-word">{view.word}</strong></p>
-        <DrawPad strokes={strokes} setStrokes={setStrokes} send={send} />
+        <DrawPad strokes={strokes} setStrokes={setStrokes} send={send} activity={activity} />
       </div>
     );
   }

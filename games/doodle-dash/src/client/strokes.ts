@@ -19,9 +19,12 @@ export function applyOp(strokes: Stroke[], op: StrokeOp): Stroke[] {
   }
 }
 
-const clamp01 = (v: number) => (Number.isFinite(v) ? Math.min(1, Math.max(0, v)) : 0);
+const clamp01 = (v: number) => (Number.isFinite(v) ? Math.min(1, Math.max(0, Math.round(v * 1000) / 1000)) : 0);
 
-/** Client (CSS pixel) coordinates → normalized 0–1 canvas coordinates, clamped to the canvas. */
+/**
+ * Client (CSS pixel) coordinates → normalized 0–1 canvas coordinates, clamped to the canvas and
+ * rounded to 3 decimals as the server stores them, so the drawer renders exactly what viewers see.
+ */
 export function normalizePoint(
   clientX: number,
   clientY: number,
@@ -78,28 +81,60 @@ export function floodFillData(
   }
 }
 
-export function renderStrokes(ctx: CanvasRenderingContext2D, strokes: readonly Stroke[]): void {
+export function clearCanvas(ctx: CanvasRenderingContext2D): void {
   ctx.fillStyle = "#ffffff";
   ctx.fillRect(0, 0, CANVAS_W, CANVAS_H);
-  for (const s of strokes) {
-    if (s.tool === "fill") {
-      const img = ctx.getImageData(0, 0, CANVAS_W, CANVAS_H);
-      const x = Math.min(CANVAS_W - 1, Math.floor(s.x * CANVAS_W));
-      const y = Math.min(CANVAS_H - 1, Math.floor(s.y * CANVAS_H));
-      floodFillData(img.data, CANVAS_W, CANVAS_H, x, y, hexToRgb(PALETTE[s.color] ?? "#000000"));
-      ctx.putImageData(img, 0, 0);
-      continue;
-    }
-    const p = s.points;
-    if (p.length < 2) continue;
-    ctx.strokeStyle = s.tool === "eraser" ? "#ffffff" : (PALETTE[s.color] ?? "#000000");
-    ctx.lineWidth = BRUSH_SIZES[s.size] ?? 4;
-    ctx.lineCap = "round";
-    ctx.lineJoin = "round";
-    ctx.beginPath();
-    ctx.moveTo(p[0]! * CANVAS_W, p[1]! * CANVAS_H);
-    if (p.length === 2) ctx.lineTo(p[0]! * CANVAS_W + 0.1, p[1]! * CANVAS_H); // a tap draws a dot
-    for (let i = 2; i + 1 < p.length; i += 2) ctx.lineTo(p[i]! * CANVAS_W, p[i + 1]! * CANVAS_H);
-    ctx.stroke();
+}
+
+export function drawStroke(ctx: CanvasRenderingContext2D, s: Stroke): void {
+  if (s.tool === "fill") {
+    const img = ctx.getImageData(0, 0, CANVAS_W, CANVAS_H);
+    const x = Math.min(CANVAS_W - 1, Math.floor(s.x * CANVAS_W));
+    const y = Math.min(CANVAS_H - 1, Math.floor(s.y * CANVAS_H));
+    floodFillData(img.data, CANVAS_W, CANVAS_H, x, y, hexToRgb(PALETTE[s.color] ?? "#000000"));
+    ctx.putImageData(img, 0, 0);
+    return;
   }
+  const p = s.points;
+  if (p.length < 2) return;
+  ctx.strokeStyle = s.tool === "eraser" ? "#ffffff" : (PALETTE[s.color] ?? "#000000");
+  ctx.lineWidth = BRUSH_SIZES[s.size] ?? 4;
+  ctx.lineCap = "round";
+  ctx.lineJoin = "round";
+  ctx.beginPath();
+  ctx.moveTo(p[0]! * CANVAS_W, p[1]! * CANVAS_H);
+  if (p.length === 2) ctx.lineTo(p[0]! * CANVAS_W + 0.1, p[1]! * CANVAS_H); // a tap draws a dot
+  for (let i = 2; i + 1 < p.length; i += 2) ctx.lineTo(p[i]! * CANVAS_W, p[i + 1]! * CANVAS_H);
+  ctx.stroke();
+}
+
+/** Full redraw from scratch. */
+export function renderStrokes(ctx: CanvasRenderingContext2D, strokes: readonly Stroke[]): void {
+  clearCanvas(ctx);
+  for (const s of strokes) drawStroke(ctx, s);
+}
+
+export interface RenderPlan {
+  /** Clear the committed snapshot first. */
+  rebuild: boolean;
+  /** Strokes to draw onto the committed snapshot (after clearing it if `rebuild`). */
+  commit: Stroke[];
+  /** The live (possibly still growing) last pen/eraser stroke, drawn over the snapshot each frame. */
+  tail: Stroke | null;
+}
+
+/**
+ * Plans an incremental render. `committed` is what the offscreen snapshot already contains; `next` is
+ * the new stroke list. Everything but a trailing pen/eraser stroke is committed (fills are always
+ * committed, so a flood fill runs once). If `next` keeps every committed stroke (same objects, in
+ * order) only the new ones are drawn; otherwise (undo, clear, resync, new turn) the snapshot is rebuilt.
+ */
+export function planRender(committed: readonly Stroke[], next: readonly Stroke[]): RenderPlan {
+  const last = next.at(-1);
+  const tail = last && last.tool !== "fill" ? last : null;
+  const toCommit = tail ? next.slice(0, -1) : [...next];
+  const extends_ = toCommit.length >= committed.length && committed.every((s, i) => toCommit[i] === s);
+  return extends_
+    ? { rebuild: false, commit: toCommit.slice(committed.length), tail }
+    : { rebuild: true, commit: toCommit, tail };
 }

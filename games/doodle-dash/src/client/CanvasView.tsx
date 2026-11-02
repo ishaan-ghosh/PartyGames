@@ -1,11 +1,27 @@
 import { useEffect, useRef, type CanvasHTMLAttributes } from "react";
 import type { Stroke } from "../rules";
-import { CANVAS_H, CANVAS_W, renderStrokes } from "./strokes";
+import { CANVAS_H, CANVAS_W, clearCanvas, drawStroke, planRender } from "./strokes";
 
 type PointerProps = Pick<
   CanvasHTMLAttributes<HTMLCanvasElement>,
   "onPointerDown" | "onPointerMove" | "onPointerUp" | "onPointerCancel" | "onLostPointerCapture"
 >;
+
+/** Offscreen copy of every committed stroke, so a new point never re-runs earlier strokes or fills. */
+interface Snapshot {
+  ctx: CanvasRenderingContext2D;
+  strokes: readonly Stroke[];
+}
+
+function makeSnapshot(): Snapshot | null {
+  const c = document.createElement("canvas");
+  c.width = CANVAS_W;
+  c.height = CANVAS_H;
+  const ctx = c.getContext("2d", { willReadFrequently: true });
+  if (!ctx) return null;
+  clearCanvas(ctx);
+  return { ctx, strokes: [] };
+}
 
 /** Fixed 800×600 backing store, CSS-scaled, so every device renders identical pixels. */
 export function CanvasView({
@@ -26,13 +42,24 @@ export function CanvasView({
   const ref = useRef<HTMLCanvasElement>(null);
   const latest = useRef(strokes);
   const frame = useRef(0);
+  const snap = useRef<Snapshot | null>(null);
   latest.current = strokes;
 
   useEffect(() => {
     cancelAnimationFrame(frame.current);
     frame.current = requestAnimationFrame(() => {
-      const ctx = ref.current?.getContext("2d", { willReadFrequently: true });
-      if (ctx) renderStrokes(ctx, latest.current);
+      const ctx = ref.current?.getContext("2d");
+      if (!ctx) return;
+      snap.current ??= makeSnapshot();
+      const s = snap.current;
+      if (!s) return;
+      const next = latest.current;
+      const plan = planRender(s.strokes, next);
+      if (plan.rebuild) clearCanvas(s.ctx);
+      for (const st of plan.commit) drawStroke(s.ctx, st);
+      s.strokes = plan.tail ? next.slice(0, -1) : next;
+      ctx.drawImage(s.ctx.canvas, 0, 0);
+      if (plan.tail) drawStroke(ctx, plan.tail);
     });
   }, [strokes]);
   useEffect(() => () => cancelAnimationFrame(frame.current), []);

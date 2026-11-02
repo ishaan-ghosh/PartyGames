@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type Dispatch, type PointerEvent, type Set
 import { BRUSH_SIZES, PALETTE, type DoodleAction, type Stroke } from "../rules";
 import { CanvasView } from "./CanvasView";
 import { chunkPoints, normalizePoint } from "./strokes";
+import type { ActivityRef } from "./useStrokes";
 
 type Tool = "pen" | "eraser" | "fill";
 const TOOLS: { tool: Tool; icon: string; label: string }[] = [
@@ -9,13 +10,25 @@ const TOOLS: { tool: Tool; icon: string; label: string }[] = [
   { tool: "eraser", icon: "🧽", label: "Eraser" },
   { tool: "fill", icon: "🪣", label: "Fill" },
 ];
+/** Spoken names for PALETTE, in the same order. */
+const COLOR_NAMES = ["Black", "White", "Gray", "Red", "Orange", "Yellow", "Green", "Teal", "Blue", "Purple", "Pink", "Brown"];
+const SIZE_NAMES = ["small", "medium", "large"];
 const BATCH_MS = 40;
 const NO_OVERSCROLL = "dd-no-overscroll";
 
-export function DrawPad({ strokes, setStrokes, send }: {
+/** Stable send/flush/end helpers; they only touch refs, so timers and listeners can hold them. */
+interface PadIO {
+  send(action: DoodleAction): void;
+  flush(): void;
+  end(): void;
+}
+
+export function DrawPad({ strokes, setStrokes, send, activity }: {
   strokes: Stroke[];
   setStrokes: Dispatch<SetStateAction<Stroke[]>>;
   send(action: DoodleAction): void;
+  /** Shared with useStrokes so it only resyncs from the server while the pad is idle. */
+  activity: ActivityRef;
 }) {
   const [tool, setTool] = useState<Tool>("pen");
   const [color, setColor] = useState(0);
@@ -28,20 +41,41 @@ export function DrawPad({ strokes, setStrokes, send }: {
   const sendRef = useRef(send);
   sendRef.current = send;
 
-  const flush = useRef(() => {
-    if (!pending.current.length) return;
-    const batches = chunkPoints(pending.current);
-    pending.current = [];
-    for (const points of batches) sendRef.current({ t: "strokeAppend", points });
+  const io: PadIO = useRef<PadIO>({
+    send(action: DoodleAction) {
+      activity.current.lastSendAt = Date.now();
+      sendRef.current(action);
+    },
+    flush() {
+      if (pending.current.length) {
+        const batches = chunkPoints(pending.current);
+        pending.current = [];
+        for (const points of batches) io.send({ t: "strokeAppend", points });
+      }
+      activity.current.pendingPoints = 0;
+    },
+    /** End the current stroke, if any. Also used when pointer-up never arrives (blur, tab hidden). */
+    end() {
+      pointer.current = null;
+      activity.current.drawing = false;
+      io.flush();
+    },
   }).current;
 
   useEffect(() => {
-    const id = setInterval(flush, BATCH_MS);
+    const id = setInterval(io.flush, BATCH_MS);
+    const hidden = () => {
+      if (document.visibilityState === "hidden") io.end();
+    };
+    document.addEventListener("visibilitychange", hidden);
+    window.addEventListener("blur", io.end);
     return () => {
       clearInterval(id);
-      flush();
+      document.removeEventListener("visibilitychange", hidden);
+      window.removeEventListener("blur", io.end);
+      io.end();
     };
-  }, [flush]);
+  }, [io]);
 
   // No pull-to-refresh or rubber-band scrolling on the page while this pad is on screen.
   useEffect(() => {
@@ -53,20 +87,27 @@ export function DrawPad({ strokes, setStrokes, send }: {
   const pos = (e: PointerEvent<HTMLCanvasElement>) => normalizePoint(e.clientX, e.clientY, e.currentTarget.getBoundingClientRect());
 
   const down = (e: PointerEvent<HTMLCanvasElement>) => {
-    if (pointer.current !== null || (e.pointerType === "mouse" && e.button !== 0)) return;
+    if (e.pointerType === "mouse" && e.button !== 0) return;
+    if (pointer.current !== null) {
+      // A second finger is ignored. A new primary pointer means every earlier pointer is up,
+      // so a stroke still marked active lost its pointer-up: end it and carry on.
+      if (!e.isPrimary) return;
+      io.end();
+    }
     e.preventDefault();
-    flush();
+    io.flush();
     const [x, y] = pos(e);
     if (tool === "fill") {
-      send({ t: "fill", color, x, y });
+      io.send({ t: "fill", color, x, y });
       setStrokes((s) => [...s, { id: localId.current--, tool: "fill", color, x, y }]);
       return;
     }
     e.currentTarget.setPointerCapture?.(e.pointerId);
     pointer.current = e.pointerId;
+    activity.current.drawing = true;
     last.current = [x, y];
     const id = localId.current--;
-    send({ t: "strokeBegin", tool, color, size, points: [x, y] });
+    io.send({ t: "strokeBegin", tool, color, size, points: [x, y] });
     setStrokes((s) => [...s, { id, tool, color, size, points: [x, y] }]);
   };
 
@@ -76,6 +117,7 @@ export function DrawPad({ strokes, setStrokes, send }: {
     if (Math.hypot(x - last.current[0], y - last.current[1]) < 0.002) return;
     last.current = [x, y];
     pending.current.push(x, y);
+    activity.current.pendingPoints = pending.current.length;
     setStrokes((s) => {
       const tail = s.at(-1);
       if (!tail || tail.tool === "fill") return s;
@@ -84,68 +126,68 @@ export function DrawPad({ strokes, setStrokes, send }: {
   };
 
   const up = (e: PointerEvent<HTMLCanvasElement>) => {
-    if (pointer.current !== e.pointerId) return;
-    pointer.current = null;
-    flush();
+    if (pointer.current === e.pointerId) io.end();
   };
 
   const edit = (action: DoodleAction, local: (s: Stroke[]) => Stroke[]) => {
-    if (pointer.current !== null) return;
-    flush();
-    send(action);
+    io.end();
+    io.send(action);
     setStrokes(local);
   };
 
   return (
     <div className="dd-pad">
-      <CanvasView
-        strokes={strokes}
-        testId="draw-canvas"
-        className="dd-canvas-draw"
-        label="Your drawing"
-        blockTouch
-        onPointerDown={down}
-        onPointerMove={move}
-        onPointerUp={up}
-        onPointerCancel={up}
-        onLostPointerCapture={up}
-      />
-      <div className="dd-tools">
-        <div className="dd-palette" role="radiogroup" aria-label="Color">
-          {PALETTE.map((c, i) => (
-            <button
-              key={c}
-              type="button"
-              role="radio"
-              aria-checked={color === i}
-              aria-label={`Color ${i + 1}`}
-              className={`dd-swatch ${color === i ? "on" : ""}`}
-              style={{ background: c }}
-              onClick={() => {
-                setColor(i);
-                if (tool === "eraser") setTool("pen");
-              }}
-            />
-          ))}
-        </div>
-        <div className="dd-toolrow">
-          {TOOLS.map(({ tool: t, icon, label }) => (
-            <button key={t} type="button" aria-label={label} aria-pressed={tool === t} className={`dd-tool ${tool === t ? "on" : ""}`} onClick={() => setTool(t)}>
-              <span aria-hidden>{icon}</span>
-            </button>
-          ))}
-          {BRUSH_SIZES.map((px, i) => (
-            <button key={px} type="button" aria-label={`Brush size ${i + 1}`} aria-pressed={size === i} className={`dd-size ${size === i ? "on" : ""}`} onClick={() => setSize(i)}>
-              <span aria-hidden style={{ width: 6 + i * 7, height: 6 + i * 7 }} />
-            </button>
-          ))}
-          <button type="button" className="dd-tool" aria-label="Undo" onClick={() => edit({ t: "undo" }, (s) => s.slice(0, -1))}>
-            <span aria-hidden>↩️</span>
+      <div className="dd-canvas-cell">
+        <CanvasView
+          strokes={strokes}
+          testId="draw-canvas"
+          className="dd-canvas-draw"
+          label="Your drawing"
+          blockTouch
+          onPointerDown={down}
+          onPointerMove={move}
+          onPointerUp={up}
+          onPointerCancel={up}
+          onLostPointerCapture={up}
+        />
+      </div>
+      <div className="dd-palette" role="radiogroup" aria-label="Color">
+        {PALETTE.map((c, i) => (
+          <button
+            key={c}
+            type="button"
+            role="radio"
+            aria-checked={color === i}
+            aria-label={COLOR_NAMES[i] ?? `Color ${i + 1}`}
+            className={`dd-swatch ${color === i ? "on" : ""}`}
+            style={{ background: c }}
+            onClick={() => {
+              setColor(i);
+              if (tool === "eraser") setTool("pen");
+            }}
+          />
+        ))}
+      </div>
+      <div className="dd-toolrow">
+        {TOOLS.map(({ tool: t, icon, label }) => (
+          <button key={t} type="button" aria-label={label} aria-pressed={tool === t} className={`dd-tool ${tool === t ? "on" : ""}`} onClick={() => setTool(t)}>
+            <span aria-hidden>{icon}</span>
           </button>
-          <button type="button" className="dd-tool" aria-label="Clear" onClick={() => edit({ t: "clear" }, () => [])}>
-            <span aria-hidden>🗑️</span>
-          </button>
-        </div>
+        ))}
+        <button
+          type="button"
+          className="dd-size"
+          aria-label={`Brush size: ${SIZE_NAMES[size] ?? size + 1}. Tap to change.`}
+          onClick={() => setSize((s) => (s + 1) % BRUSH_SIZES.length)}
+        >
+          <span aria-hidden style={{ width: 6 + size * 7, height: 6 + size * 7 }} />
+        </button>
+        <button type="button" className="dd-tool" aria-label="Undo" onClick={() => edit({ t: "undo" }, (s) => s.slice(0, -1))}>
+          <span aria-hidden>↩️</span>
+        </button>
+        <button type="button" className="dd-tool" aria-label="Clear" onClick={() => edit({ t: "clear" }, () => [])}>
+          <span aria-hidden>🗑️</span>
+        </button>
       </div>
     </div>
   );

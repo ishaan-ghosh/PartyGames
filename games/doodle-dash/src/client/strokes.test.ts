@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { MAX_POINTS_PER_BATCH, type Stroke } from "../rules";
-import { applyOp, chunkPoints, floodFillData, hexToRgb, normalizePoint } from "./strokes";
+import { applyOp, chunkPoints, floodFillData, hexToRgb, normalizePoint, planRender } from "./strokes";
 
 const pen = (id: number, points: number[]): Stroke => ({ id, tool: "pen", color: 0, size: 0, points });
 
@@ -73,6 +73,52 @@ describe("normalizePoint", () => {
 
   it("returns the origin for a zero-size box instead of NaN", () => {
     expect(normalizePoint(10, 10, { left: 0, top: 0, width: 0, height: 0 })).toEqual([0, 0]);
+  });
+
+  it("rounds to 3 decimals like the server, so the drawer renders what viewers see", () => {
+    expect(normalizePoint(1, 2, { left: 0, top: 0, width: 3, height: 3 })).toEqual([0.333, 0.667]);
+  });
+});
+
+describe("planRender", () => {
+  const fill = (id: number): Stroke => ({ id, tool: "fill", color: 3, x: 0.5, y: 0.5 });
+  const a = pen(1, [0, 0]);
+  const b = fill(2);
+
+  it("draws only new strokes when the list extends the committed prefix, keeping the live stroke as the tail", () => {
+    const c = pen(3, [0.1, 0.1]);
+    const d = pen(4, [0.2, 0.2]);
+    expect(planRender([a], [a, b, c, d])).toEqual({ rebuild: false, commit: [b, c], tail: d });
+  });
+
+  it("redraws just the tail when the live stroke grows", () => {
+    const live = pen(3, [0, 0]);
+    const grown = { ...live, points: [0, 0, 0.5, 0.5] };
+    expect(planRender([a, b], [a, b, grown])).toEqual({ rebuild: false, commit: [], tail: grown });
+  });
+
+  it("commits a trailing fill instead of treating it as a tail", () => {
+    expect(planRender([a], [a, b])).toEqual({ rebuild: false, commit: [b], tail: null });
+  });
+
+  it("rebuilds after undo", () => {
+    const c = pen(3, [0.1, 0.1]);
+    expect(planRender([a, b], [a, c])).toEqual({ rebuild: true, commit: [a], tail: c });
+    expect(planRender([a, b], [a])).toEqual({ rebuild: true, commit: [], tail: a });
+  });
+
+  it("rebuilds after clear", () => {
+    expect(planRender([a, b], [])).toEqual({ rebuild: true, commit: [], tail: null });
+  });
+
+  it("rebuilds when an earlier stroke was replaced (resync or new turn)", () => {
+    const a2 = { ...a };
+    expect(planRender([a, b], [a2, b])).toEqual({ rebuild: true, commit: [a2, b], tail: null });
+  });
+
+  it("does nothing new for an identical list", () => {
+    const list = [a, b];
+    expect(planRender(list, list)).toEqual({ rebuild: false, commit: [], tail: null });
   });
 });
 

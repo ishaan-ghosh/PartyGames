@@ -1,17 +1,19 @@
 import type { SettingsFormProps } from "@party/ui";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { DoodleSettings } from "../rules";
+import { splitWords, syncWordsText } from "./settings";
 
 const DRAW_TIMES = [30, 45, 60, 80, 100, 120, 150, 180];
 const DIFFICULTIES = ["easy", "medium", "hard", "mixed"] as const;
-const splitWords = (text: string) => text.split(",").map((w) => w.trim()).filter(Boolean);
-const sameWords = (text: string, list: string[]) => splitWords(text).join("|").toLowerCase() === list.join("|").toLowerCase();
 
 export function DoodleSettingsForm({ settings, onChange, disabled }: SettingsFormProps<DoodleSettings>) {
   const [words, setWords] = useState(settings.customWords.join(", "));
+  const user = useRef({ focused: false, edited: false });
+  // Room messages bring a new array every time; only react when the words themselves change.
+  const incoming = settings.customWords.join("\n");
   useEffect(() => {
-    setWords((w) => (sameWords(w, settings.customWords) ? w : settings.customWords.join(", ")));
-  }, [settings.customWords]);
+    setWords((w) => syncWordsText(w, incoming ? incoming.split("\n") : [], user.current));
+  }, [incoming]);
 
   return (
     <div className="dd-settings">
@@ -46,8 +48,17 @@ export function DoodleSettingsForm({ settings, onChange, disabled }: SettingsFor
           value={words}
           disabled={disabled}
           placeholder="grandma's lasagna, the group chat"
-          onChange={(e) => setWords(e.target.value)}
-          onBlur={() => onChange({ ...settings, customWords: splitWords(words) })}
+          onFocus={() => {
+            user.current.focused = true;
+          }}
+          onChange={(e) => {
+            user.current.edited = true;
+            setWords(e.target.value);
+          }}
+          onBlur={() => {
+            user.current = { focused: false, edited: false };
+            onChange({ ...settings, customWords: splitWords(words) });
+          }}
         />
       </label>
     </div>

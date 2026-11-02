@@ -6,7 +6,8 @@ import { timerFor } from "./phase";
 export function Hint({ hint, big = false }: { hint: string | null; big?: boolean }) {
   if (!hint) return null;
   return (
-    <div className={`dd-hint ${big ? "dd-hint-big" : ""}`} aria-label={`Hint: ${hint.replace(/_/g, "blank ")}`}>
+    <div className={`dd-hint ${big ? "dd-hint-big" : ""}`}>
+      <span className="dd-sr-only">Hint: {[...hint].map((ch) => (ch === "_" ? "blank" : ch === " " ? "space" : ch)).join(" ")}</span>
       {[...hint].map((ch, i) => (
         <span key={i} aria-hidden className={ch === " " ? "dd-gap" : "dd-letter"}>{ch === "_" || ch === " " ? " " : ch}</span>
       ))}
@@ -65,12 +66,23 @@ export function Feed({ items, players, compact = false }: { items: ViewFeedItem[
 export function Scoreboard({ view }: { view: DoodleView }) {
   const sorted = [...view.players].sort((a, b) => b.score - a.score);
   return (
-    <ol className="dd-scores">
+    <ol className={`dd-scores ${sorted.length > 8 ? "dd-scores-many" : ""}`}>
       {sorted.map((p) => (
         <li key={p.id} className={`dd-score-row ${p.solved ? "solved" : ""} ${p.id === view.drawerId ? "drawer" : ""} ${p.connected ? "" : "chip-dim"}`}>
           <span className="dd-score-name">
-            <span aria-hidden>{p.avatar.emoji}</span> {p.name} {p.id === view.drawerId && <span aria-label="drawing">✏️</span>}
-            {p.solved && <span aria-label="guessed">✅</span>}
+            <span aria-hidden>{p.avatar.emoji}</span> {p.name}{" "}
+            {p.id === view.drawerId && (
+              <>
+                <span aria-hidden>✏️</span>
+                <span className="dd-sr-only">(drawing)</span>
+              </>
+            )}
+            {p.solved && (
+              <>
+                <span aria-hidden>✅</span>
+                <span className="dd-sr-only">(guessed it)</span>
+              </>
+            )}
           </span>
           <span className="dd-score-num" data-testid={`score-${p.name}`}>{p.score}</span>
         </li>
