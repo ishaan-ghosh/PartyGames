@@ -1,9 +1,16 @@
-import { describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it } from "vitest";
 import { parseAction } from "./actions";
 import { handleStroke } from "./strokes";
 import { drawing } from "./testkit";
-import { INK_LIMIT, MAX_POINTS_PER_BATCH, type StrokeAction } from "./types";
+import { INK_LIMIT, MAX_POINTS_PER_BATCH, STROKE_COST, type DoodleState, type StrokeAction } from "./types";
 import { view } from "./view";
+
+// node:v8 is loaded dynamically because this package's tsconfig has no Node types.
+let serialize: (v: unknown) => Uint8Array;
+beforeAll(async () => {
+  const v8Module = "node:v8";
+  ({ serialize } = (await import(/* @vite-ignore */ v8Module)) as { serialize: (v: unknown) => Uint8Array });
+});
 
 const begin = (points: number[]) => ({ t: "strokeBegin", tool: "pen", color: 0, size: 0, points });
 
@@ -28,33 +35,77 @@ describe("ink limit", () => {
     expect(INK_LIMIT).toBe(120_000);
   });
 
+  it("charges a per-stroke cost on strokeBegin and fill but not on append", () => {
+    const s = drawing("banana");
+    handleStroke(s, "p1", { t: "strokeBegin", tool: "pen", color: 0, size: 0, points: [0.1, 0.1] });
+    expect(s.ink).toBe(2 + STROKE_COST);
+    handleStroke(s, "p1", { t: "strokeAppend", points: [0.2, 0.2, 0.3, 0.3] });
+    expect(s.ink).toBe(6 + STROKE_COST);
+    handleStroke(s, "p1", { t: "fill", color: 0, x: 0.5, y: 0.5 });
+    expect(s.ink).toBe(8 + 2 * STROKE_COST);
+    handleStroke(s, "p1", { t: "undo" });
+    handleStroke(s, "p1", { t: "clear" });
+    expect(s.ink).toBe(8 + 2 * STROKE_COST); // no refunds
+  });
+
   it("rejects a batch that would exceed the limit", () => {
     const s = drawing("banana");
-    s.ink = INK_LIMIT - 2;
+    s.ink = INK_LIMIT - STROKE_COST - 2;
     const over = handleStroke(s, "p1", { t: "strokeBegin", tool: "pen", color: 0, size: 0, points: [0.1, 0.1, 0.2, 0.2] });
     expect(over.events).toBeUndefined();
-    expect(s.ink).toBe(INK_LIMIT - 2);
+    expect(s.ink).toBe(INK_LIMIT - STROKE_COST - 2);
     const fits = handleStroke(s, "p1", { t: "strokeBegin", tool: "pen", color: 0, size: 0, points: [0.1, 0.1] });
     expect(fits.events).toBeDefined();
     expect(s.ink).toBe(INK_LIMIT);
   });
 
-  it("keeps the drawer's full view under 1 MB at the ink limit", () => {
-    let seed = 12345;
-    const rand = () => (seed = (seed * 1103515245 + 12345) >>> 0) / 2 ** 32;
+  it("rejects a fill that would exceed the limit", () => {
     const s = drawing("banana");
-    let first = true;
-    while (s.ink < INK_LIMIT) {
-      const n = Math.min(MAX_POINTS_PER_BATCH, INK_LIMIT - s.ink);
-      const pts = Array.from({ length: n }, rand);
-      const raw = first ? begin(pts) : { t: "strokeAppend", points: pts };
-      const action = parseAction(raw) as StrokeAction;
-      expect(handleStroke(s, "p1", action).events).toBeDefined();
-      first = false;
+    s.ink = INK_LIMIT - STROKE_COST - 1;
+    expect(handleStroke(s, "p1", { t: "fill", color: 0, x: 0.5, y: 0.5 }).events).toBeUndefined();
+    expect(s.strokes).toEqual([]);
+  });
+});
+
+describe("max-ink message and save size", () => {
+  let seed = 12345;
+  const rand = () => (seed = (seed * 1103515245 + 12345) >>> 0) / 2 ** 32;
+
+  /** Feeds raw actions through parseAction + handleStroke until the drawer is refused. */
+  function flood(next: (first: boolean) => unknown): DoodleState {
+    const s = drawing("banana");
+    for (let first = true; ; first = false) {
+      const action = parseAction(next(first)) as StrokeAction;
+      expect(action).not.toBeNull();
+      if (!handleStroke(s, "p1", action).events) break;
     }
-    expect(s.ink).toBe(INK_LIMIT);
-    const bytes = new TextEncoder().encode(JSON.stringify(view(s, { kind: "player", playerId: "p1" }))).length;
-    console.log(`max-ink drawer view JSON: ${bytes} bytes`);
-    expect(bytes).toBeLessThan(1_000_000);
+    return s;
+  }
+
+  function expectSmall(s: DoodleState) {
+    const viewBytes = new TextEncoder().encode(JSON.stringify(view(s, { kind: "player", playerId: "p1" }))).length;
+    expect(viewBytes).toBeLessThan(1_000_000);
+    expect(serialize(s).length).toBeLessThan(1_500_000);
+  }
+
+  it("one long random stroke", () => {
+    const s = flood((first) => {
+      const pts = Array.from({ length: MAX_POINTS_PER_BATCH }, rand);
+      return first ? begin(pts) : { t: "strokeAppend", points: pts };
+    });
+    expect(s.ink).toBeGreaterThan(INK_LIMIT - MAX_POINTS_PER_BATCH);
+    expectSmall(s);
+  });
+
+  it("many 2-point dots", () => {
+    const s = flood(() => begin([rand(), rand()]));
+    expect(s.ink).toBeGreaterThan(INK_LIMIT - STROKE_COST - 2);
+    expectSmall(s);
+  });
+
+  it("many fills", () => {
+    const s = flood(() => ({ t: "fill", color: 3, x: rand(), y: rand() }));
+    expect(s.ink).toBeGreaterThan(INK_LIMIT - STROKE_COST - 2);
+    expectSmall(s);
   });
 });

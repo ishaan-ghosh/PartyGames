@@ -1,5 +1,5 @@
 import type { ActionResult } from "@party/shared";
-import { INK_LIMIT, type DoodleState, type Stroke, type StrokeAction, type StrokeOp } from "./types";
+import { INK_LIMIT, STROKE_COST, type DoodleState, type Stroke, type StrokeAction, type StrokeOp } from "./types";
 
 /** Applies a drawer's stroke action. Always quiet; accepted actions carry one op event for the others. */
 export function handleStroke(s: DoodleState, playerId: string, action: StrokeAction): ActionResult<DoodleState> {
@@ -8,8 +8,9 @@ export function handleStroke(s: DoodleState, playerId: string, action: StrokeAct
   let op: StrokeOp;
   switch (action.t) {
     case "strokeBegin": {
-      if (s.ink + action.points.length > INK_LIMIT) return ignore;
-      s.ink += action.points.length;
+      const cost = action.points.length + STROKE_COST;
+      if (s.ink + cost > INK_LIMIT) return ignore;
+      s.ink += cost;
       const stroke: Stroke = { id: s.nextStrokeId++, tool: action.tool, color: action.color, size: action.size, points: [...action.points] };
       s.strokes.push(stroke);
       op = { op: "begin", seq: ++s.opSeq, stroke: { ...stroke, points: [...stroke.points] } };
@@ -24,8 +25,8 @@ export function handleStroke(s: DoodleState, playerId: string, action: StrokeAct
       break;
     }
     case "fill": {
-      if (s.ink + 2 > INK_LIMIT) return ignore;
-      s.ink += 2;
+      if (s.ink + 2 + STROKE_COST > INK_LIMIT) return ignore;
+      s.ink += 2 + STROKE_COST;
       const stroke: Stroke = { id: s.nextStrokeId++, tool: "fill", color: action.color, x: action.x, y: action.y };
       s.strokes.push(stroke);
       op = { op: "begin", seq: ++s.opSeq, stroke: { ...stroke } };

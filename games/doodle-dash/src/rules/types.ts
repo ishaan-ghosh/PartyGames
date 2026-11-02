@@ -10,6 +10,7 @@ export const REVEAL_MS = 5_000;
 export const DRAWER_GRACE_MS = 10_000;
 export const MAX_POINTS_PER_BATCH = 400; // numbers (x,y pairs × 2)
 export const INK_LIMIT = 120_000; // numbers per turn (keeps a max-ink view well under 1 MB)
+export const STROKE_COST = 10; // extra ink charged per strokeBegin/fill for per-object overhead
 export const FEED_KEEP = 60;
 export const VIEW_FEED_LIMIT = 30; // feed items sent to each viewer
 export const MIN_CONNECTED = 2; // players needed online to start the next turn
