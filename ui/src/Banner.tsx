@@ -7,7 +7,7 @@ export function Banner({ tone = "info", floating = false, action, children }: {
   children: ReactNode;
 }) {
   return (
-    <div role={tone === "bad" ? "alert" : "status"}className={`banner banner-${tone} ${floating ? "banner-floating" : ""}`}>
+    <div role={tone === "bad" ? "alert" : "status"} className={`banner banner-${tone} ${floating ? "banner-floating" : ""}`}>
       <span>{children}</span>
       {action}
     </div>
