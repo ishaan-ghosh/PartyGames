@@ -223,11 +223,18 @@ when no screen is connected. There is a mute toggle.
 
 ## 8. Future work
 
-- More original games: fill-in-the-blank cards, prompt-and-vote, a 3D property-trading board game,
-  and a **rare-answer game** inspired by Krillion. In it, everyone answers the same category
-  prompt on their phone at the same time ("name a fish"). Valid answers score more the fewer
-  people in the room gave them. Validity comes from curated answer lists per prompt, with a
-  group vote as the fallback.
+- **Next game (own spec): Puff Up.** An original hot-potato prompt game inspired by Krillion.
+  - Players sit in a 3D ring around a pufferfish that acts as the timer. It points at a player
+    and inflates until that player gives a valid, not-yet-used answer to the prompt ("name a fish"),
+    or it pops and they lose a life (3 lives). The last player standing wins.
+  - The prompt changes when someone loses a life, or when everyone has answered twice
+    ("Fresh Waters"). Each new prompt brings a faster speed curve.
+  - Twists: deep-cut rare answers fully deflate the puffer and let the player aim it;
+    Riptide reverses the turn order; sudden death at 2 players; eliminated ghosts vote on
+    disputes and throw emoji reactions.
+  - Validation: curated answer lists first (these also set rarity), with Claude Haiku as the
+    fallback. The API key is stored as a Cloudflare secret, and the server makes the calls.
+- Later games: fill-in-the-blank cards, prompt-and-vote, a 3D property-trading board game.
 - Pass-and-play mode: [#1](https://github.com/ishaan-ghosh/PartyGames/issues/1).
 - Team mode for Doodle Dash.
 - Automatic deploys from CI.
