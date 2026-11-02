@@ -77,6 +77,25 @@ describe("pause between turns", () => {
     expect(s.paused).toBe(false);
   });
 
+  it("ends the game instead of pausing when no remaining drawer of the final round is connected", () => {
+    let s = drawing("banana", 3, { rounds: 1 });
+    setConnected(s, ["p1"]); // p2 and p3, the only drawers left, are away
+    s = onSkip(s, 1000);
+    s = onTimer(s, 6000);
+    expect(s.phase).toBe("over");
+    expect(s.paused).toBe(false);
+    expect(nextTimerAt(s)).toBeNull();
+  });
+
+  it("still pauses in the final round while a remaining drawer is connected", () => {
+    let s = drawing("banana", 3, { rounds: 1 });
+    setConnected(s, ["p3"]);
+    s = onSkip(s, 1000);
+    s = onTimer(s, 6000);
+    expect(s.phase).toBe("reveal");
+    expect(s.paused).toBe(true);
+  });
+
   it("keeps a running turn going when players drop below two", () => {
     const s = drawing("banana");
     setConnected(s, ["p1"]);
