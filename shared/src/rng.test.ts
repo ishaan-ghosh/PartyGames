@@ -29,4 +29,7 @@ describe("Rng", () => {
   it("returns every item when asked for more than exist", () => {
     expect(new Rng(3).sample([1, 2], 5).sort()).toEqual([1, 2]);
   });
+  it("returns nothing for a negative count", () => {
+    expect(new Rng(3).sample([1, 2, 3], -1)).toEqual([]);
+  });
 });

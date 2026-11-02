@@ -27,4 +27,25 @@ describe("ClientMsg", () => {
     expect(ok({ type: "host", cmd: { cmd: "explode" } })).toBe(false);
     expect(ok({ type: "hello", role: "player", token: "x".repeat(65) })).toBe(false);
   });
+  it("rejects structurally wrong messages", () => {
+    expect(ok([])).toBe(false);
+    expect(ok([{ type: "hello", role: "player" }])).toBe(false);
+    expect(ok({ type: ["hello"], role: "player" })).toBe(false);
+    expect(ok({ type: "host", cmd: { cmd: "kick" } })).toBe(false);
+    expect(ok({ type: "host" })).toBe(false);
+  });
+  it("rejects actions without a payload and settings updates without settings", () => {
+    expect(ok({ type: "action" })).toBe(false);
+    expect(ok({ type: "host", cmd: { cmd: "updateSettings" } })).toBe(false);
+  });
+  it("rejects empty tokens and host keys", () => {
+    expect(ok({ type: "hello", role: "player", token: "" })).toBe(false);
+    expect(ok({ type: "hello", role: "screen", hostKey: "" })).toBe(false);
+  });
+  it("rejects overlong fields", () => {
+    expect(ok({ type: "hello", role: "player", name: "x".repeat(41) })).toBe(false);
+    expect(ok({ type: "hello", role: "screen", hostKey: "x".repeat(65) })).toBe(false);
+    expect(ok({ type: "host", cmd: { cmd: "selectGame", gameId: "x".repeat(41) } })).toBe(false);
+    expect(ok({ type: "host", cmd: { cmd: "kick", playerId: "x".repeat(65) } })).toBe(false);
+  });
 });
