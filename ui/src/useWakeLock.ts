@@ -8,7 +8,15 @@ export function useWakeLock(active: boolean): void {
     let cancelled = false;
     const acquire = async () => {
       try {
-        lock = await navigator.wakeLock.request("screen");
+        const l = await navigator.wakeLock.request("screen");
+        if (cancelled) {
+          // Cleanup ran while the request was pending (always under StrictMode): don't leak it.
+          void l.release().catch(() => {});
+          return;
+        }
+        const prev = lock;
+        lock = l;
+        if (prev && prev !== l) void prev.release().catch(() => {});
       } catch {
         /* denied or unsupported: ignore */
       }
@@ -22,6 +30,7 @@ export function useWakeLock(active: boolean): void {
       cancelled = true;
       document.removeEventListener("visibilitychange", onVisible);
       void lock?.release().catch(() => {});
+      lock = null;
     };
   }, [active]);
 }

@@ -9,40 +9,68 @@ const NOTES: Record<SoundName, [freq: number, at: number][]> = {
 };
 let ctx: AudioContext | null = null;
 
-export function isMuted(): boolean {
+/** In-memory source of truth for mute; localStorage only persists it (it may be unavailable). */
+let muted: boolean = (() => {
   try {
     return localStorage.getItem(KEY) === "1";
   } catch {
     return false;
   }
+})();
+
+export function isMuted(): boolean {
+  return muted;
 }
 
-export function setMuted(muted: boolean): void {
+export function setMuted(next: boolean): void {
+  muted = next;
   try {
-    localStorage.setItem(KEY, muted ? "1" : "0");
+    localStorage.setItem(KEY, next ? "1" : "0");
   } catch {
     /* storage unavailable: mute just won't persist */
   }
 }
 
+function getContext(): AudioContext {
+  ctx ??= new AudioContext();
+  // Safari also has an "interrupted" state, so resume on anything that isn't running.
+  if (ctx.state !== "running") ctx.resume().catch(() => {});
+  return ctx;
+}
+
+/**
+ * Create/resume the AudioContext and play a 1-sample silent buffer. Call from a user
+ * gesture — iOS Safari keeps the context suspended otherwise.
+ */
+export function unlockAudio(): void {
+  try {
+    const c = getContext();
+    const src = c.createBufferSource();
+    src.buffer = c.createBuffer(1, 1, 22050);
+    src.connect(c.destination);
+    src.start(0);
+  } catch {
+    /* audio unavailable */
+  }
+}
+
 /** Tiny synthesized sound effects — no audio files to load. */
 export function playSound(name: SoundName): void {
-  if (isMuted()) return;
+  if (muted) return;
   try {
-    ctx ??= new AudioContext();
-    if (ctx.state === "suspended") void ctx.resume();
-    const t0 = ctx.currentTime;
+    const c = getContext();
+    const t0 = c.currentTime;
     const tick = name === "tick";
     const dur = tick ? 0.05 : 0.16;
     for (const [freq, at] of NOTES[name]) {
-      const osc = ctx.createOscillator();
-      const gain = ctx.createGain();
+      const osc = c.createOscillator();
+      const gain = c.createGain();
       osc.type = tick ? "square" : "triangle";
       osc.frequency.value = freq;
       gain.gain.setValueAtTime(0.0001, t0 + at);
       gain.gain.exponentialRampToValueAtTime(tick ? 0.04 : 0.18, t0 + at + 0.01);
       gain.gain.exponentialRampToValueAtTime(0.0001, t0 + at + dur);
-      osc.connect(gain).connect(ctx.destination);
+      osc.connect(gain).connect(c.destination);
       osc.start(t0 + at);
       osc.stop(t0 + at + dur + 0.02);
     }
