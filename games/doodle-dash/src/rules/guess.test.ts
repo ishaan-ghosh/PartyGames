@@ -117,3 +117,35 @@ describe("hints", () => {
     expect(view(s, as("p3")).word).toBeNull();
   });
 });
+
+describe("guesses after the turn ended", () => {
+  const texts = (s: ReturnType<typeof drawing>, id: string) => view(s, as(id)).feed.map((f) => f.text);
+
+  it("shows a late correct guess only to the guesser", () => {
+    const s = drawing("banana");
+    onTimer(s, 80_000); // reveal
+    expect(s.phase).toBe("reveal");
+    const r = guess(s, "p2", "Banana!", 80_001);
+    expect(s.scores.p2).toBe(0);
+    expect(texts(s, "p2")).toContain("Banana!");
+    expect(texts(s, "p3")).not.toContain("Banana!");
+    expect(texts(s, "p1")).not.toContain("Banana!");
+    expect(view(s, screen).feed.map((f) => f.text)).not.toContain("Banana!");
+    expect(r.quiet).toBeFalsy();
+  });
+
+  it("shows a late guess containing the word only to the guesser", () => {
+    const s = drawing("banana");
+    onTimer(s, 80_000);
+    guess(s, "p2", "big banana", 80_001);
+    expect(texts(s, "p2")).toContain("big banana");
+    expect(view(s, screen).feed.map((f) => f.text)).not.toContain("big banana");
+  });
+
+  it("keeps ordinary chat after the turn public", () => {
+    const s = drawing("banana");
+    onTimer(s, 80_000);
+    guess(s, "p2", "nice drawing", 80_001);
+    expect(view(s, screen).feed.map((f) => f.text)).toContain("nice drawing");
+  });
+});

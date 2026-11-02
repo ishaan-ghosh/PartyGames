@@ -8,7 +8,10 @@ export function handleGuess(s: DoodleState, playerId: string, text: string, now:
   if (!clean || !(playerId in s.scores)) return { state: s, quiet: true };
 
   if (s.phase !== "drawing" || !s.word) {
-    pushFeed(s, { kind: "chat", playerId, text: clean, audience: "all" });
+    // A late guess that is (or contains) the word stays private, so a correct guess is never shown.
+    const match = s.word ? matchGuess(clean, s.word) : "miss";
+    const hidden = match === "correct" || match === "contains";
+    pushFeed(s, { kind: "chat", playerId, text: clean, audience: hidden ? { only: playerId } : "all" });
     return { state: s };
   }
   if (playerId === s.drawerId) return { state: s, quiet: true };

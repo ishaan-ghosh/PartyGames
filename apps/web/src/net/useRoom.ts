@@ -3,7 +3,7 @@ import PartySocket from "partysocket";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { storage } from "../lib/storage";
 import { Outbox } from "./outbox";
-import { FATAL_ERRORS, initialRoomState, reduceServerMsg, type ClientRoomState } from "./roomState";
+import { FATAL_ERRORS, forgetOnFatalError, initialRoomState, reduceServerMsg, type ClientRoomState } from "./roomState";
 
 export interface HelloInfo { role: "screen" | "player"; name?: string; avatar?: Avatar }
 export interface RoomConnection extends ClientRoomState {
@@ -42,8 +42,8 @@ export function useRoom(code: string, hello: HelloInfo | null): RoomConnection {
     });
     outboxRef.current = outbox;
     // Every (re)connect re-introduces us with our token, so the server returns us to our seat.
+    // Status turns "open" on the server's welcome (see reduceServerMsg), not on the socket opening.
     const onOpen = () => {
-      setState((s) => (s.status === "closed" ? s : { ...s, status: "open" }));
       ws.send(JSON.stringify({
         type: "hello",
         role: hello.role,
@@ -70,9 +70,7 @@ export function useRoom(code: string, hello: HelloInfo | null): RoomConnection {
       }
       if (msg.type === "welcome") storage.setToken(code, hello.role, msg.token);
       if (msg.type === "error" && FATAL_ERRORS.has(msg.code)) {
-        if (msg.code === "KICKED") storage.clearToken(code, hello.role);
-        // The room is gone and its code may be reused: forget our seat, role and host key for it.
-        if (msg.code === "ROOM_NOT_FOUND") storage.clearRoom(code);
+        forgetOnFatalError(storage, code, hello.role, msg.code);
         outbox.clear();
         ws.close(); // stops PartySocket from reconnecting
       }
@@ -94,11 +92,15 @@ export function useRoom(code: string, hello: HelloInfo | null): RoomConnection {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [code, helloKey]);
 
+  // Both sends are silently dropped when there's no outbox (before the effect runs / after unmount).
+  // Callers must only send once `you` is set; the UI renders nothing that sends before that.
+  // Actions survive a short reconnect (Outbox TTL); host commands are never queued and are dropped
+  // unless the connection is welcomed, so a stale skip/kick/start can't hit the wrong turn.
   const sendAction = useCallback((payload: unknown) => {
     outboxRef.current?.send(JSON.stringify({ type: "action", payload }));
   }, []);
   const sendHost = useCallback((cmd: HostCommand) => {
-    outboxRef.current?.send(JSON.stringify({ type: "host", cmd }));
+    outboxRef.current?.sendNow(JSON.stringify({ type: "host", cmd }));
   }, []);
   const onEvent = useCallback((cb: (payload: unknown) => void) => {
     listeners.current.add(cb);
