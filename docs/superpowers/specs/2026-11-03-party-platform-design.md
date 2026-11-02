@@ -24,7 +24,7 @@ we use our own names, rules, and content.
 
 ### Non-goals (v1)
 
-Pass-and-play / single shared input device (tracked as a future GitHub issue), accounts
+Pass-and-play / single shared input device (tracked in [#1](https://github.com/ishaan-ghosh/PartyGames/issues/1)), accounts
 or logins, public matchmaking, more than one game, team mode, saved drawings or
 history, moderation tools.
 
@@ -223,7 +223,12 @@ when no screen is connected. There is a mute toggle.
 
 ## 8. Future work
 
-- Pass-and-play mode (GitHub issue).
-- More original games: fill-in-the-blank cards, prompt-and-vote, a 3D property-trading board game.
+
+- More original games: fill-in-the-blank cards, prompt-and-vote, a 3D property-trading board game,
+  and a **rare-answer game** inspired by Krillion. In it, everyone answers the same category
+  prompt on their phone at the same time ("name a fish"). Valid answers score more the fewer
+  people in the room gave them. Validity comes from curated answer lists per prompt, with a
+  group vote as the fallback.
+- Pass-and-play mode: [#1](https://github.com/ishaan-ghosh/PartyGames/issues/1).
 - Team mode for Doodle Dash.
 - Automatic deploys from CI.
