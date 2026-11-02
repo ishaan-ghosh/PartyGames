@@ -1,4 +1,4 @@
-import type { ServerMsg } from "@party/shared";
+import { LIMITS, type ServerMsg } from "@party/shared";
 import { Server, type Connection, type WSMessage } from "partyserver";
 import type { Env } from "./env";
 import { DEFAULT_GAME_ID, games } from "./games";
@@ -24,7 +24,18 @@ export class Room extends Server<Env> {
   async onStart() {
     const saved = await this.ctx.storage.get<SavedRoom>(KEY);
     this.core = this.makeCore(saved);
+    if (!saved) {
+      // Never created (or already discarded). Drop anything partyserver wrote on init (its `__ps_name`
+      // fallback record) so touching an unknown code leaves no storage behind. The name still comes
+      // from ctx.id.name.
+      await this.ctx.storage.deleteAll();
+      this.scheduled = null;
+      return;
+    }
     this.scheduled = await this.ctx.storage.getAlarm();
+    // Restoring marks everyone disconnected; persist that and make sure an alarm exists, because a
+    // restart can drop sockets without onClose and nothing else would ever wake this room again.
+    await this.after(true);
   }
 
   private makeCore(saved?: SavedRoom): RoomCore {
@@ -88,21 +99,35 @@ export class Room extends Server<Env> {
   async onAlarm() {
     const now = Date.now();
     this.scheduled = null;
-    if (this.core.shouldDiscard(now)) {
-      await this.ctx.storage.delete(KEY);
-      this.core = this.makeCore();
+    if (!this.core.created || this.core.shouldDiscard(now)) {
+      await this.discard();
       return;
     }
     this.core.tick(now);
     await this.after(true);
   }
 
+  /** Forgets the room entirely: no saved state, no alarm, no partyserver bookkeeping. The code is free again. */
+  private async discard() {
+    await this.ctx.storage.deleteAlarm();
+    await this.ctx.storage.deleteAll();
+    this.scheduled = null;
+    this.core = this.makeCore();
+  }
+
+  /**
+   * Persists if asked, then keeps an alarm at or before the core's next timer. A created room always
+   * has one, capped at the empty-room TTL from now, as a watchdog: when it fires, the room is either
+   * discarded (still empty past its TTL) or ticked and re-armed.
+   */
   private async after(persist: boolean) {
+    if (!this.core.created) return;
     if (persist) await this.ctx.storage.put(KEY, this.core.serialize());
-    const at = this.core.nextAlarmAt();
-    if (at === this.scheduled) return;
+    const at = Math.min(this.core.nextAlarmAt() ?? Infinity, Date.now() + LIMITS.emptyRoomTtlMs);
+    // An earlier alarm than needed is harmless (it ticks and re-arms), so only move it earlier. This
+    // avoids an alarm write per message while the watchdog drifts forward.
+    if (this.scheduled !== null && this.scheduled <= at) return;
     this.scheduled = at;
-    if (at === null) await this.ctx.storage.deleteAlarm();
-    else await this.ctx.storage.setAlarm(at);
+    await this.ctx.storage.setAlarm(at);
   }
 }
