@@ -1,0 +1,19 @@
+.home, .join { min-height: 100%; display: grid; align-content: center; justify-items: center; gap: var(--space-5); padding: var(--space-6) var(--space-4); max-width: 520px; margin: 0 auto; text-align: center; }
+.logo { font-size: clamp(3rem, 12vw, 5.5rem); letter-spacing: -0.02em; }
+.logo span { color: var(--accent); }
+.tagline { color: var(--text-dim); font-size: 1.15rem; }
+.join-card, .join-form { width: 100%; display: grid; gap: var(--space-4); text-align: left; }
+.code-input { font: 700 2.2rem var(--font-display); letter-spacing: 0.4em; text-align: center; text-transform: uppercase; }
+.host-row { display: grid; gap: var(--space-3); width: 100%; }
+.room-code-md { font-size: 3rem; letter-spacing: 0.2em; }
+.emoji-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: var(--space-2); }
+.emoji-btn { aspect-ratio: 1; min-width: 48px; min-height: 48px; border-radius: 50%; border: 0; background: var(--bg-raised-2); font-size: 1.4rem; cursor: pointer; transition: transform 0.2s var(--ease-spring); }
+.emoji-btn.on { transform: scale(1.15); }
+.color-row { display: flex; gap: var(--space-2); justify-content: center; flex-wrap: wrap; }
+.color-dot { width: 48px; height: 48px; border-radius: 50%; border: 3px solid transparent; cursor: pointer; }
+.color-dot.on { border-color: var(--text); }
+.fatal { display: grid; gap: var(--space-4); justify-items: center; max-width: 420px; }
+.fatal-emoji { font-size: 3rem; }
+/* 8 columns need ~436px of card content: (436 - 7×4px gap) / 8 ≈ 51px cells, still ≥ 48px. */
+@media (min-width: 520px) { .emoji-grid { grid-template-columns: repeat(8, 1fr); gap: var(--space-1); } }
+.loading { color: var(--text-dim); font: 600 1.4rem var(--font-display); }
