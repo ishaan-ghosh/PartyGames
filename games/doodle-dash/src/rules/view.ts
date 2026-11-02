@@ -19,6 +19,8 @@ export interface DoodleView {
   feed: ViewFeedItem[];
   strokes: Stroke[];
   opSeq: number;
+  /** True while the game is paused between turns waiting for players to (re)connect. */
+  waiting?: boolean;
 }
 
 export function makeHint(word: string, revealed: number[]): string {
@@ -73,5 +75,6 @@ export function view(s: DoodleState, viewer: Viewer): DoodleView {
     feed: s.feed.filter((f) => canSee(f.audience)).slice(-VIEW_FEED_LIMIT).map(({ audience: _hidden, ...rest }) => rest),
     strokes: s.strokes,
     opSeq: s.opSeq,
+    waiting: s.paused,
   };
 }

@@ -5,7 +5,7 @@ import { wordPool } from "./settings";
 /** Words kept out of the choices when the word pool is exhausted and starts over. */
 const RECENT_WORDS_KEPT = 10;
 import {
-  CHOOSE_MS, DRAWER_GRACE_MS, FEED_KEEP, REVEAL_MS,
+  CHOOSE_MS, DRAWER_GRACE_MS, FEED_KEEP, MIN_CONNECTED, REVEAL_MS,
   type DoodleSettings, type DoodleState, type FeedItem,
 } from "./types";
 
@@ -56,6 +56,7 @@ export function setup(players: PlayerInfo[], settings: DoodleSettings, seed: num
     nextFeedId: 1,
     usedWords: [],
     drawerGoneAt: null,
+    paused: false,
   };
   return startTurn(s, now);
 }
@@ -152,9 +153,38 @@ export function endTurn(s: DoodleState, now: number): DoodleState {
   return s;
 }
 
+export function connectedCount(s: DoodleState): number {
+  return s.players.filter((p) => s.connected[p.id]).length;
+}
+
+/** True when the turn that just ended was the last one of the last round. */
+function lastTurnPlayed(s: DoodleState): boolean {
+  return s.turnIndex + 1 >= s.turnOrder.length && s.round >= s.settings.rounds;
+}
+
 export function nextTurn(s: DoodleState, now: number): DoodleState {
+  if (!lastTurnPlayed(s) && connectedCount(s) < MIN_CONNECTED) {
+    // Wait in "reveal" until enough players are back; resumeIfReady starts the next turn.
+    if (!s.paused) {
+      s.paused = true;
+      pushFeed(s, { kind: "system", playerId: null, text: "Waiting for players…", audience: "all" });
+    }
+    return s;
+  }
+  s.paused = false;
   s.turnIndex += 1;
   return startTurn(s, now);
+}
+
+/**
+ * Starts the next turn if the game is paused between turns and enough players are
+ * connected again. The module's onPresence must call this after marking a player
+ * connected. Returns true when a turn was started.
+ */
+export function resumeIfReady(s: DoodleState, now: number): boolean {
+  if (!s.paused || connectedCount(s) < MIN_CONNECTED) return false;
+  nextTurn(s, now);
+  return true;
 }
 
 export function allGuessed(s: DoodleState): boolean {
@@ -172,7 +202,7 @@ export function revealHint(s: DoodleState): void {
 }
 
 export function nextTimerAt(s: DoodleState): number | null {
-  if (s.phase === "over") return null;
+  if (s.phase === "over" || s.paused) return null;
   const times = [s.phaseEndsAt];
   if (s.phase === "drawing" && s.hintTimes.length) times.push(s.hintTimes[0]!);
   if (s.drawerGoneAt !== null && (s.phase === "choosing" || s.phase === "drawing")) {

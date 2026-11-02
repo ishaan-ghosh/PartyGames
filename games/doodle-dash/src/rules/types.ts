@@ -12,6 +12,7 @@ export const MAX_POINTS_PER_BATCH = 400; // numbers (x,y pairs × 2)
 export const INK_LIMIT = 200_000; // numbers per turn
 export const FEED_KEEP = 60;
 export const VIEW_FEED_LIMIT = 30; // feed items sent to each viewer
+export const MIN_CONNECTED = 2; // players needed online to start the next turn
 
 export type Difficulty = "easy" | "medium" | "hard" | "mixed";
 export interface DoodleSettings { rounds: number; drawTime: number; difficulty: Difficulty; customWords: string[] }
@@ -72,4 +73,9 @@ export interface DoodleState {
   nextFeedId: number;
   usedWords: string[];
   drawerGoneAt: number | null;
+  /**
+   * True while the game waits in "reveal" for at least MIN_CONNECTED players to be
+   * connected before the next turn starts. No timers run while paused.
+   */
+  paused: boolean;
 }
