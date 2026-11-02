@@ -187,7 +187,9 @@ export function nextTurn(s: DoodleState, now: number): DoodleState {
  * connected. Returns true when a turn was started.
  */
 export function resumeIfReady(s: DoodleState, now: number): boolean {
-  if (!s.paused || connectedCount(s) < MIN_CONNECTED) return false;
+  if (!s.paused) return false;
+  // Nothing left to play in the final round: let nextTurn end the game even if few are online.
+  if (connectedCount(s) < MIN_CONNECTED && !lastTurnPlayed(s)) return false;
   nextTurn(s, now);
   return true;
 }
