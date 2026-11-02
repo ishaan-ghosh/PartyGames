@@ -40,9 +40,20 @@ const counter: GameModule<CState, CAction, { target: number }> = {
 function setup(opts: { created?: boolean } = {}) {
   const sent: { to: string; msg: ServerMsg }[] = [];
   const closed: string[] = [];
+  /** Sends and closes in the order they happened, e.g. "send:c1:error" / "close:c1". */
+  const log: string[] = [];
   let n = 0;
   const deps: CoreDeps = { newId: () => `id${++n}`, newSeed: () => 7, games: { counter }, defaultGameId: "counter" };
-  const out: Outbox = { send: (to, msg) => sent.push({ to, msg }), close: (c) => closed.push(c) };
+  const out: Outbox = {
+    send: (to, msg) => {
+      sent.push({ to, msg });
+      log.push(`send:${to}:${msg.type}`);
+    },
+    close: (c) => {
+      closed.push(c);
+      log.push(`close:${c}`);
+    },
+  };
   const core = new RoomCore("ABCD", deps, out);
   if (opts.created !== false) core.create("HOSTKEY", 0);
   const msgs = (to: string, type?: ServerMsg["type"]) =>
@@ -55,7 +66,7 @@ function setup(opts: { created?: boolean } = {}) {
   const screen = (conn: string, extra: Record<string, unknown> = {}, now = 0) =>
     core.message(conn, { type: "hello", role: "screen", ...extra }, now);
   const host = (conn: string, cmd: object, now = 0) => core.message(conn, { type: "host", cmd }, now);
-  return { core, sent, closed, msgs, last, id, player, screen, host, deps };
+  return { core, sent, closed, log, msgs, last, id, player, screen, host, deps };
 }
 
 /** Screen s1 is host (has the host key); Ana (c1) and Ben (c2) are in the lobby. */
@@ -324,5 +335,179 @@ describe("RoomCore: host handoff and lifetime", () => {
     restored.message("n1", { type: "hello", role: "player", token }, 6000);
     expect(sent2.find((s) => s.to === "n1" && s.msg.type === "welcome")).toMatchObject({ msg: { you: { id: h.id("c1") } } });
     expect(sent2.filter((s) => s.to === "n1" && s.msg.type === "view").at(-1)?.msg).toMatchObject({ payload: { count: 1 } });
+  });
+});
+
+describe("RoomCore: seat replacement and role-aware reclaim", () => {
+  it("tells the old connection it was REPLACED before closing it", () => {
+    const h = setup();
+    h.player("c1", "Ana");
+    const { token, you } = h.last("c1", "welcome")!;
+    h.core.message("c2", { type: "hello", role: "player", token }, 5);
+    expect(h.last("c1", "error")?.code).toBe("REPLACED");
+    const errAt = h.log.indexOf("send:c1:error");
+    const closeAt = h.log.indexOf("close:c1");
+    expect(errAt).toBeGreaterThanOrEqual(0);
+    expect(closeAt).toBeGreaterThan(errAt);
+    expect(h.last("c2", "welcome")!.you.id).toBe(you.id);
+    expect(h.last("c2", "room")!.room.players).toHaveLength(1);
+  });
+
+  it("does not let a player hello reclaim a screen's seat", () => {
+    const h = setup();
+    h.screen("s1");
+    const screenWelcome = h.last("s1", "welcome")!;
+    h.player("c1", "Ana", { token: screenWelcome.token });
+    const w = h.last("c1", "welcome")!;
+    expect(w.you.kind).toBe("player");
+    expect(w.you.id).not.toBe(screenWelcome.you.id);
+    expect(w.token).not.toBe(screenWelcome.token);
+    expect(h.closed).not.toContain("s1");
+    const room = h.last("c1", "room")!.room;
+    expect(room.screens).toHaveLength(1);
+    expect(room.screens[0]!.connected).toBe(true);
+    expect(room.players.map((p) => p.name)).toEqual(["Ana"]);
+  });
+
+  it("does not let a screen hello reclaim a player's seat", () => {
+    const h = setup();
+    h.player("c1", "Ana");
+    const playerWelcome = h.last("c1", "welcome")!;
+    h.screen("s1", { token: playerWelcome.token });
+    const w = h.last("s1", "welcome")!;
+    expect(w.you.kind).toBe("screen");
+    expect(w.you.id).not.toBe(playerWelcome.you.id);
+    expect(h.closed).not.toContain("c1");
+    const room = h.last("s1", "room")!.room;
+    expect(room.players).toHaveLength(1);
+    expect(room.players[0]!.connected).toBe(true);
+    expect(room.screens).toHaveLength(1);
+  });
+});
+
+describe("RoomCore: lobby eviction for caps", () => {
+  it("makes room for a new player by removing the longest-disconnected player, never the host", () => {
+    const h = setup();
+    for (let i = 0; i < 12; i++) h.player(`c${i}`, `P${i}`);
+    // c0 is host (first device). It drops first but must never be evicted.
+    h.core.disconnect("c0", 1);
+    h.core.disconnect("c3", 10);
+    h.core.disconnect("c5", 5);
+    h.player("n1", "New1", {}, 20);
+    expect(h.last("n1", "welcome")).toBeDefined();
+    let names = h.last("n1", "room")!.room.players.map((p) => p.name);
+    expect(names).not.toContain("P5");
+    expect(names).toContain("P3");
+    expect(names).toContain("P0");
+    expect(names).toHaveLength(12);
+    h.player("n2", "New2", {}, 21);
+    names = h.last("n2", "room")!.room.players.map((p) => p.name);
+    expect(names).not.toContain("P3");
+    expect(names).toContain("P0");
+    h.player("n3", "New3", {}, 22);
+    expect(h.last("n3", "error")?.code).toBe("ROOM_FULL");
+    expect(h.closed).toContain("n3");
+  });
+
+  it("makes room for a new screen by removing a disconnected screen", () => {
+    const h = setup();
+    h.player("c1", "Ana"); // host
+    for (let i = 0; i < 4; i++) h.screen(`s${i}`);
+    h.core.disconnect("s2", 5);
+    h.screen("s4", {}, 10);
+    expect(h.last("s4", "welcome")?.you.kind).toBe("screen");
+    const room = h.last("s4", "room")!.room;
+    expect(room.screens).toHaveLength(4);
+    expect(room.screens.every((s) => s.connected)).toBe(true);
+    h.screen("s5", {}, 11);
+    expect(h.last("s5", "error")?.code).toBe("SCREENS_FULL");
+  });
+
+  it("never evicts connected members", () => {
+    const h = setup();
+    for (let i = 0; i < 12; i++) h.player(`c${i}`, `P${i}`);
+    h.player("n1", "New1");
+    expect(h.last("n1", "error")?.code).toBe("ROOM_FULL");
+    expect(h.last("c1", "room")!.room.players).toHaveLength(12);
+  });
+
+  it("keeps the hard cap mid-game", () => {
+    const h = setup();
+    h.screen("s1", { hostKey: "HOSTKEY" });
+    for (let i = 0; i < 12; i++) h.player(`c${i}`, `P${i}`);
+    h.host("s1", { cmd: "start" });
+    h.core.disconnect("c4", 5);
+    h.player("n1", "New1", {}, 10);
+    expect(h.last("n1", "error")?.code).toBe("ROOM_FULL");
+    expect(h.last("s1", "room")!.room.players.map((p) => p.name)).toContain("P4");
+  });
+});
+
+describe("RoomCore: belowMin counts only seated players", () => {
+  it("ignores late spectators", () => {
+    const h = started();
+    h.core.disconnect("c2", 5);
+    h.player("c3", "Cy", {}, 6);
+    expect(h.last("c1", "room")!.room.belowMin).toBe(true);
+  });
+
+  it("remembers who was seated across save and restore", () => {
+    const h = started();
+    h.player("c3", "Cy", {}, 2);
+    const t1 = h.last("c1", "welcome")!.token;
+    const t3 = h.last("c3", "welcome")!.token;
+    const saved = h.core.serialize();
+    const out2: Outbox = { send: () => {}, close: () => {} };
+    const restored = new RoomCore("ABCD", h.deps, out2, { saved, now: 5000 });
+    restored.message("n1", { type: "hello", role: "player", token: t1 }, 6000);
+    restored.message("n3", { type: "hello", role: "player", token: t3 }, 6000);
+    expect(restored.snapshot().belowMin).toBe(true);
+  });
+
+  it("restores older saves without the new fields", () => {
+    const h = started();
+    const t1 = h.last("c1", "welcome")!.token;
+    const saved = h.core.serialize() as unknown as Record<string, unknown>;
+    delete saved.seated;
+    for (const m of saved.members as Record<string, unknown>[]) delete m.disconnectedAt;
+    const out2: Outbox = { send: () => {}, close: () => {} };
+    const restored = new RoomCore("ABCD", h.deps, out2, { saved: saved as never, now: 5000 });
+    restored.message("n1", { type: "hello", role: "player", token: t1 }, 6000);
+    expect(restored.snapshot().belowMin).toBe(true);
+    const ser = restored.serialize();
+    expect(Array.isArray(ser.seated)).toBe(true);
+    for (const m of ser.members) expect(m.disconnectedAt === null || typeof m.disconnectedAt === "number").toBe(true);
+  });
+});
+
+describe("RoomCore: name and avatar hygiene", () => {
+  it("rejects names made only of zero-width characters", () => {
+    const h = setup();
+    h.player("c1", "​‌‍﻿");
+    expect(h.last("c1", "error")?.code).toBe("BAD_MESSAGE");
+    expect(h.last("c1", "welcome")).toBeUndefined();
+  });
+
+  it("strips control and format characters from names", () => {
+    const h = setup();
+    h.player("c1", "A​n\u0007a");
+    expect(h.last("c1", "room")!.room.players[0]!.name).toBe("Ana");
+  });
+
+  it("truncates names by code point so emoji are not split", () => {
+    const h = setup();
+    h.player("c1", "😀".repeat(17));
+    expect(h.last("c1", "room")!.room.players[0]!.name).toBe("😀".repeat(16));
+  });
+
+  it("keeps ZWJ emoji avatars and falls back when the emoji is invisible", () => {
+    const h = setup();
+    const family = "👨‍👩‍👧";
+    h.player("c1", "Ana", { avatar: { emoji: family, color: "#112233" } });
+    h.player("c2", "Ben", { avatar: { emoji: "​\u0007", color: "#445566" } });
+    const players = h.last("c2", "room")!.room.players;
+    expect(players[0]!.avatar).toEqual({ emoji: family, color: "#112233" });
+    expect(players[1]!.avatar.emoji).toBe("🙂");
+    expect(players[1]!.avatar.color).toBe("#445566");
   });
 });

@@ -1,4 +1,7 @@
-/** Seeded PRNG (mulberry32). `seed` advances on every call so state can be persisted and resumed. */
+/**
+ * Seeded PRNG (mulberry32). `seed` advances on every call so state can be persisted and resumed.
+ * The seed must be an integer (a 32-bit value); fractional seeds are truncated by the `| 0` step.
+ */
 export class Rng {
   constructor(public seed: number) {}
 
@@ -21,7 +24,7 @@ export class Rng {
 
   sample<T>(items: readonly T[], n: number): T[] {
     const copy = [...items];
-    const count = Math.min(n, copy.length);
+    const count = Math.max(0, Math.min(n, copy.length));
     for (let i = 0; i < count; i++) {
       const j = i + this.int(copy.length - i);
       [copy[i], copy[j]] = [copy[j]!, copy[i]!];

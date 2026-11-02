@@ -26,7 +26,7 @@ export interface CoreDeps {
   defaultGameId: string;
 }
 
-interface Member {
+export interface Member {
   id: string;
   token: string;
   kind: "screen" | "player";
@@ -34,6 +34,8 @@ interface Member {
   avatar: Avatar;
   connId: string | null;
   joinSeq: number;
+  /** When this member last lost its connection; null while connected. */
+  disconnectedAt: number | null;
 }
 
 export interface SavedRoom {
@@ -49,6 +51,8 @@ export interface SavedRoom {
   settings: unknown;
   phase: "lobby" | "playing";
   gameState: unknown;
+  /** Player ids seated when the current game started (late joiners are spectators). */
+  seated: string[];
   lastResults: GameResult[] | null;
   emptySince: number | null;
 }
@@ -57,6 +61,23 @@ export interface Handled { persist: boolean }
 const YES: Handled = { persist: true };
 const NO: Handled = { persist: false };
 const DEFAULT_AVATAR: Avatar = { emoji: "🙂", color: "#7f5af0" };
+const CONTROL_OR_FORMAT = /[\p{Cc}\p{Cf}]/gu;
+/** Control/format characters except ZWJ (U+200D) and VS16 (U+FE0F), which emoji sequences need. */
+const CONTROL_OR_FORMAT_EXCEPT_EMOJI = /(?![‍️])[\p{Cc}\p{Cf}]/gu;
+const AVATAR_EMOJI_MAX_CODE_POINTS = 16;
+
+function cleanName(raw: string): string {
+  const name = raw.replace(/\s+/gu, " ").replace(CONTROL_OR_FORMAT, "").trim().replace(/ {2,}/g, " ");
+  return Array.from(name).slice(0, LIMITS.nameMax).join("").trim();
+}
+
+function cleanAvatar(avatar: Avatar | undefined): Avatar {
+  if (!avatar) return DEFAULT_AVATAR;
+  const emoji = avatar.emoji.replace(CONTROL_OR_FORMAT_EXCEPT_EMOJI, "").trim();
+  const len = Array.from(emoji).length;
+  const ok = len > 0 && len <= AVATAR_EMOJI_MAX_CODE_POINTS && /[^‍️]/u.test(emoji);
+  return { emoji: ok ? emoji : DEFAULT_AVATAR.emoji, color: avatar.color };
+}
 
 /** All room behavior, free of Cloudflare APIs. The Durable Object adapter feeds it messages and time. */
 export class RoomCore {
@@ -70,7 +91,15 @@ export class RoomCore {
   ) {
     if (restore) {
       this.s = structuredClone(restore.saved);
-      for (const m of this.s.members) m.connId = null;
+      for (const m of this.s.members) {
+        // Older saves lack disconnectedAt; anyone connected at save time dropped "now".
+        if (m.connId !== null || typeof m.disconnectedAt !== "number") m.disconnectedAt = restore.now;
+        m.connId = null;
+      }
+      // Older saves lack seated; best effort is every player seat that existed.
+      if (!Array.isArray(this.s.seated)) {
+        this.s.seated = this.s.phase === "playing" ? this.s.members.filter((m) => m.kind === "player").map((m) => m.id) : [];
+      }
       this.s.emptySince ??= restore.now;
       if (this.s.phase === "playing") {
         for (const m of this.s.members) {
@@ -83,7 +112,7 @@ export class RoomCore {
       this.s = {
         v: 1, code, created: false, hostKey: null, hostId: null, hostGoneAt: null,
         members: [], joinSeq: 0, gameId: deps.defaultGameId, settings: game.defaultSettings,
-        phase: "lobby", gameState: null, lastResults: null, emptySince: null,
+        phase: "lobby", gameState: null, seated: [], lastResults: null, emptySince: null,
       };
     }
   }
@@ -124,6 +153,7 @@ export class RoomCore {
     const m = this.memberByConn(connId);
     if (!m) return NO;
     m.connId = null;
+    m.disconnectedAt = now;
     if (m.id === this.s.hostId) this.s.hostGoneAt = now;
     if (this.s.phase === "playing" && m.kind === "player") {
       this.s.gameState = this.game.onPresence(this.s.gameState, m.id, false, now);
@@ -175,7 +205,7 @@ export class RoomCore {
         .filter((m) => m.kind === "screen")
         .map((m) => ({ id: m.id, connected: m.connId !== null, isHost: m.id === hostId })),
       lastResults: this.s.lastResults,
-      belowMin: this.s.phase === "playing" && this.connected("player").length < this.game.meta.minPlayers,
+      belowMin: this.s.phase === "playing" && this.connectedSeated() < this.game.meta.minPlayers,
     };
   }
 
@@ -187,6 +217,27 @@ export class RoomCore {
 
   private connected(kind?: Member["kind"]): Member[] {
     return this.s.members.filter((m) => m.connId !== null && (!kind || m.kind === kind));
+  }
+
+  private connectedSeated(): number {
+    const seated = new Set(this.s.seated);
+    return this.connected("player").filter((m) => seated.has(m.id)).length;
+  }
+
+  /**
+   * Lobby only: if `kind` is at `cap`, remove its longest-disconnected member (never a connected one,
+   * never the host). Returns true if there is room afterwards.
+   */
+  private makeRoom(kind: Member["kind"], cap: number): boolean {
+    const same = this.s.members.filter((x) => x.kind === kind);
+    if (same.length < cap) return true;
+    if (this.s.phase !== "lobby") return false;
+    const victim = same
+      .filter((x) => x.connId === null && x.id !== this.s.hostId)
+      .sort((a, b) => (a.disconnectedAt ?? 0) - (b.disconnectedAt ?? 0) || a.joinSeq - b.joinSeq)[0];
+    if (!victim) return false;
+    this.s.members = this.s.members.filter((x) => x !== victim);
+    return true;
   }
 
   private memberByConn(connId: string): Member | undefined {
@@ -205,10 +256,16 @@ export class RoomCore {
     }
     if (this.memberByConn(connId)) return NO; // duplicate hello on one socket
 
-    let m: Member | null | undefined = msg.token ? this.s.members.find((x) => x.token === msg.token) : undefined;
+    let m: Member | null | undefined = msg.token
+      ? this.s.members.find((x) => x.token === msg.token && x.kind === msg.role)
+      : undefined;
     if (m) {
-      if (m.connId && m.connId !== connId) this.out.close(m.connId);
+      if (m.connId && m.connId !== connId) {
+        this.error(m.connId, "REPLACED", "This seat was opened on another tab or device.");
+        this.out.close(m.connId);
+      }
       m.connId = connId;
+      m.disconnectedAt = null;
     } else {
       m = this.addMember(connId, msg);
       if (!m) return NO;
@@ -235,22 +292,23 @@ export class RoomCore {
   private addMember(connId: string, msg: HelloMessage): Member | null {
     let name = "Screen";
     if (msg.role === "player") {
-      name = (msg.name ?? "").trim().replace(/\s+/g, " ").slice(0, LIMITS.nameMax);
+      name = cleanName(msg.name ?? "");
       if (!name) {
         this.error(connId, "BAD_MESSAGE", "Pick a name first.");
         return null;
       }
-      const players = this.s.members.filter((x) => x.kind === "player");
-      if (players.length >= LIMITS.maxPlayers) {
+      // Name check runs before any eviction so a rejected newcomer never costs anyone their seat.
+      const lower = name.toLowerCase();
+      if (this.s.members.some((p) => p.kind === "player" && p.name.toLowerCase() === lower)) {
+        this.error(connId, "NAME_TAKEN", `Someone here is already called ${name}.`);
+        return null;
+      }
+      if (!this.makeRoom("player", LIMITS.maxPlayers)) {
         this.error(connId, "ROOM_FULL", `This room is full (${LIMITS.maxPlayers} players).`);
         this.out.close(connId);
         return null;
       }
-      if (players.some((p) => p.name.toLowerCase() === name.toLowerCase())) {
-        this.error(connId, "NAME_TAKEN", `Someone here is already called ${name}.`);
-        return null;
-      }
-    } else if (this.s.members.filter((x) => x.kind === "screen").length >= LIMITS.maxScreens) {
+    } else if (!this.makeRoom("screen", LIMITS.maxScreens)) {
       this.error(connId, "SCREENS_FULL", `This room already has ${LIMITS.maxScreens} screens.`);
       this.out.close(connId);
       return null;
@@ -260,9 +318,10 @@ export class RoomCore {
       token: this.deps.newId(),
       kind: msg.role,
       name,
-      avatar: msg.avatar ?? DEFAULT_AVATAR,
+      avatar: cleanAvatar(msg.avatar),
       connId,
       joinSeq: ++this.s.joinSeq,
+      disconnectedAt: null,
     };
     this.s.members.push(m);
     return m;
@@ -314,6 +373,7 @@ export class RoomCore {
         const infos: PlayerInfo[] = players.map((p) => ({ id: p.id, name: p.name, avatar: p.avatar, connected: true }));
         s.gameState = this.game.setup(infos, s.settings, this.deps.newSeed(), now);
         s.phase = "playing";
+        s.seated = players.map((p) => p.id);
         s.lastResults = null;
         this.checkOver();
         break;
@@ -356,6 +416,7 @@ export class RoomCore {
     this.s.lastResults = this.game.results(this.s.gameState);
     this.s.phase = "lobby";
     this.s.gameState = null;
+    this.s.seated = [];
   }
 
   private checkOver(): void {
