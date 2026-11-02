@@ -1,3 +1,4 @@
+import { hasLetter } from "./chars";
 import type { Difficulty, DoodleSettings } from "./types";
 import { EASY, HARD, MEDIUM } from "./words";
 
@@ -19,7 +20,7 @@ export function parseSettings(input: unknown): DoodleSettings {
     if (typeof w !== "string") continue;
     const t = w.trim().replace(/\s+/g, " ");
     const k = t.toLowerCase();
-    if (t.length < 1 || t.length > 30 || seen.has(k)) continue;
+    if (t.length < 1 || t.length > 30 || !hasLetter(t) || seen.has(k)) continue;
     seen.add(k);
     customWords.push(t);
     if (customWords.length >= 200) break;

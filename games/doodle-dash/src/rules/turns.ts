@@ -1,7 +1,11 @@
 import { Rng, type ActionResult, type PlayerInfo } from "@party/shared";
+import { isLetter } from "./chars";
 import { wordPool } from "./settings";
+
+/** Words kept out of the choices when the word pool is exhausted and starts over. */
+const RECENT_WORDS_KEPT = 10;
 import {
-  CHOOSE_MS, DRAWER_GRACE_MS, FEED_KEEP, REVEAL_MS,
+  CHOOSE_MS, DRAWER_GRACE_MS, FEED_KEEP, MIN_CONNECTED, REVEAL_MS,
   type DoodleSettings, type DoodleState, type FeedItem,
 } from "./types";
 
@@ -15,7 +19,7 @@ export function pushFeed(s: DoodleState, item: Omit<FeedItem, "id">): void {
 }
 
 export function letterIndices(word: string): number[] {
-  return [...word].flatMap((ch, i) => (/[a-z0-9]/i.test(ch) ? [i] : []));
+  return [...word].flatMap((ch, i) => (isLetter(ch) ? [i] : []));
 }
 
 export function hintSchedule(word: string, start: number, durationMs: number): number[] {
@@ -27,7 +31,7 @@ export function hintSchedule(word: string, start: number, durationMs: number): n
 export function setup(players: PlayerInfo[], settings: DoodleSettings, seed: number, now: number): DoodleState {
   const s: DoodleState = {
     seed,
-    settings,
+    settings: { ...settings, customWords: [...settings.customWords] },
     players: players.map((p) => ({ id: p.id, name: p.name, avatar: p.avatar })),
     scores: Object.fromEntries(players.map((p) => [p.id, 0])),
     connected: Object.fromEntries(players.map((p) => [p.id, p.connected])),
@@ -52,17 +56,24 @@ export function setup(players: PlayerInfo[], settings: DoodleSettings, seed: num
     nextFeedId: 1,
     usedWords: [],
     drawerGoneAt: null,
+    paused: false,
   };
   return startTurn(s, now);
 }
 
+function unusedWords(pool: string[], usedWords: string[]): string[] {
+  const used = new Set(usedWords.map((w) => w.toLowerCase()));
+  return pool.filter((w) => !used.has(w.toLowerCase()));
+}
+
 function availableWords(s: DoodleState): string[] {
-  const used = new Set(s.usedWords.map((w) => w.toLowerCase()));
   const pool = wordPool(s.settings);
-  const fresh = pool.filter((w) => !used.has(w.toLowerCase()));
+  const fresh = unusedWords(pool, s.usedWords);
   if (fresh.length >= 3) return fresh;
-  s.usedWords = [];
-  return pool;
+  // Pool exhausted: start over, but keep the most recent words out of the next choices.
+  const keep = Math.max(0, Math.min(pool.length - 3, RECENT_WORDS_KEPT));
+  s.usedWords = keep > 0 ? s.usedWords.slice(-keep) : [];
+  return unusedWords(pool, s.usedWords);
 }
 
 export function startTurn(s: DoodleState, now: number): DoodleState {
@@ -142,9 +153,38 @@ export function endTurn(s: DoodleState, now: number): DoodleState {
   return s;
 }
 
+export function connectedCount(s: DoodleState): number {
+  return s.players.filter((p) => s.connected[p.id]).length;
+}
+
+/** True when the turn that just ended was the last one of the last round. */
+function lastTurnPlayed(s: DoodleState): boolean {
+  return s.turnIndex + 1 >= s.turnOrder.length && s.round >= s.settings.rounds;
+}
+
 export function nextTurn(s: DoodleState, now: number): DoodleState {
+  if (!lastTurnPlayed(s) && connectedCount(s) < MIN_CONNECTED) {
+    // Wait in "reveal" until enough players are back; resumeIfReady starts the next turn.
+    if (!s.paused) {
+      s.paused = true;
+      pushFeed(s, { kind: "system", playerId: null, text: "Waiting for players…", audience: "all" });
+    }
+    return s;
+  }
+  s.paused = false;
   s.turnIndex += 1;
   return startTurn(s, now);
+}
+
+/**
+ * Starts the next turn if the game is paused between turns and enough players are
+ * connected again. The module's onPresence must call this after marking a player
+ * connected. Returns true when a turn was started.
+ */
+export function resumeIfReady(s: DoodleState, now: number): boolean {
+  if (!s.paused || connectedCount(s) < MIN_CONNECTED) return false;
+  nextTurn(s, now);
+  return true;
 }
 
 export function allGuessed(s: DoodleState): boolean {
@@ -162,7 +202,7 @@ export function revealHint(s: DoodleState): void {
 }
 
 export function nextTimerAt(s: DoodleState): number | null {
-  if (s.phase === "over") return null;
+  if (s.phase === "over" || s.paused) return null;
   const times = [s.phaseEndsAt];
   if (s.phase === "drawing" && s.hintTimes.length) times.push(s.hintTimes[0]!);
   if (s.drawerGoneAt !== null && (s.phase === "choosing" || s.phase === "drawing")) {
