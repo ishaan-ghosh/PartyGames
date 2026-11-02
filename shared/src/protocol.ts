@@ -27,8 +27,8 @@ export const ClientMsg = z.discriminatedUnion("type", [
   z.object({
     type: z.literal("hello"),
     role: z.enum(["screen", "player"]),
-    token: z.string().max(64).optional(),
-    hostKey: z.string().max(64).optional(),
+    token: z.string().min(1).max(64).optional(),
+    hostKey: z.string().min(1).max(64).optional(),
     name: z.string().max(40).optional(),
     avatar: Avatar.optional(),
   }),
@@ -47,7 +47,8 @@ export type ErrorCode =
   | "BAD_MESSAGE"
   | "NOT_HOST"
   | "NOT_ENOUGH_PLAYERS"
-  | "KICKED";
+  | "KICKED"
+  | "REPLACED";
 
 export interface PublicPlayer { id: string; name: string; avatar: Avatar; connected: boolean; isHost: boolean }
 export interface PublicScreen { id: string; connected: boolean; isHost: boolean }
