@@ -8,7 +8,8 @@ const point = coord.transform(round3);
 const color = z.number().int().min(0).max(PALETTE.length - 1);
 const points = (min: number) =>
   z.array(coord).min(min).max(MAX_POINTS_PER_BATCH).refine((a) => a.length % 2 === 0, "points must be x,y pairs")
-    // Rounding at array level via map yields a packed array (zod's own output is sparse-layout in V8, ~40% larger saved).
+    // Rounding at array level via map yields a packed array in memory (zod's own output is holey). This does not
+    // shrink the saved bytes: the save path structuredClones state, and the clone's arrays are holey again.
     .transform((a) => a.map(round3));
 
 const Action = z.discriminatedUnion("t", [
