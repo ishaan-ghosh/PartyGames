@@ -223,7 +223,6 @@ when no screen is connected. There is a mute toggle.
 
 ## 8. Future work
 
-
 - More original games: fill-in-the-blank cards, prompt-and-vote, a 3D property-trading board game,
   and a **rare-answer game** inspired by Krillion. In it, everyone answers the same category
   prompt on their phone at the same time ("name a fish"). Valid answers score more the fewer
