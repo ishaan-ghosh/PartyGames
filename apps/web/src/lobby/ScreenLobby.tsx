@@ -1,13 +1,18 @@
 import type { HostCommand, RoomSnapshot } from "@party/shared";
 import { PlayerChip, playSound } from "@party/ui";
 import { QRCodeSVG } from "qrcode.react";
-import { lazy, Suspense, useEffect, useRef } from "react";
+import { Fragment, lazy, Suspense, useEffect, useRef } from "react";
+import { ErrorBoundary } from "../lib/ErrorBoundary";
 import { publicOrigin } from "../lib/origin";
+import { hasWebGL } from "../lib/webgl";
 import { HostPanel } from "./HostPanel";
 import { Results } from "./Results";
 
 const LobbyBackground = lazy(() => import("./LobbyBackground"));
 const reducedMotion = () => window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;
+// Probed once: each probe creates a GL context, and browsers cap how many may exist.
+let webgl: boolean | undefined;
+const showBackground = () => !reducedMotion() && (webgl ??= hasWebGL());
 
 export function ScreenLobby({ room, isHost, online, sendHost }: {
   room: RoomSnapshot;
@@ -25,10 +30,13 @@ export function ScreenLobby({ room, isHost, online, sendHost }: {
 
   return (
     <div className="lobby-screen">
-      {!reducedMotion() && (
-        <Suspense fallback={null}>
-          <LobbyBackground />
-        </Suspense>
+      {showBackground() && (
+        // Decorative: a failed chunk load (stale deploy) or a Canvas error must not blank the TV.
+        <ErrorBoundary>
+          <Suspense fallback={null}>
+            <LobbyBackground />
+          </Suspense>
+        </ErrorBoundary>
       )}
       <section className="code-panel card">
         <p className="eyebrow">Join at <strong>{new URL(url).host}</strong></p>
@@ -42,15 +50,17 @@ export function ScreenLobby({ room, isHost, online, sendHost }: {
         <h2>{count ? `${count} player${count === 1 ? "" : "s"} in` : "Waiting for players…"}</h2>
         <div className="players-grid">
           {room.players.map((p) => (
-            <PlayerChip
-              key={p.id}
-              data-testid="lobby-player"
-              size="lg"
-              name={p.name}
-              avatar={p.avatar}
-              dim={!p.connected}
-              badge={p.isHost ? "host" : undefined}
-            />
+            <Fragment key={p.id}>
+              <PlayerChip
+                data-testid="lobby-player"
+                size="lg"
+                name={p.name}
+                avatar={p.avatar}
+                dim={!p.connected}
+                badge={p.isHost ? "host" : undefined}
+              />
+              {!p.connected && <span className="sr-only">(offline)</span>}
+            </Fragment>
           ))}
         </div>
         {room.lastResults && <Results results={room.lastResults} />}

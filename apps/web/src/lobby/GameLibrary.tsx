@@ -25,7 +25,14 @@ export function GameLibrary({ selected, onSelect, disabled = false }: {
         </button>
       ))}
       {comingSoon.map((g) => (
-        <div key={g.id} className="game-card game-card-soon" style={{ "--card-accent": g.accent } as CSSProperties}>
+        <div
+          key={g.id}
+          role="radio"
+          aria-checked={false}
+          aria-disabled={true}
+          className="game-card game-card-soon"
+          style={{ "--card-accent": g.accent } as CSSProperties}
+        >
           <span className="game-emoji" aria-hidden>{g.emoji}</span>
           <strong>{g.name}</strong>
           <span className="game-tagline">Coming soon</span>

@@ -57,6 +57,31 @@ describe("reduceServerMsg", () => {
     expect(s.status).toBe("closed");
   });
 
+  it("treats a NAME_TAKEN or BAD_MESSAGE before welcome as a failed (re)join: forgets you and room", () => {
+    for (const code of ["NAME_TAKEN", "BAD_MESSAGE"] as const) {
+      const stale = {
+        ...initialRoomState,
+        status: "reconnecting" as const,
+        you: { kind: "player" as const, id: "a" },
+        room: room("lobby"),
+        view: { x: 1 },
+      };
+      const s = reduceServerMsg(stale, { type: "error", code, message: "nope" }, 0);
+      expect(s.you).toBeNull();
+      expect(s.room).toBeNull();
+      expect(s.view).toBeNull();
+      expect(s.error).toEqual({ code, message: "nope" });
+      expect(s.status).toBe("reconnecting");
+    }
+  });
+
+  it("keeps you and room for those errors once welcomed", () => {
+    const live = { ...initialRoomState, status: "open" as const, you: { kind: "player" as const, id: "a" }, room: room("lobby") };
+    const s = reduceServerMsg(live, { type: "error", code: "BAD_MESSAGE", message: "bad" }, 0);
+    expect(s.you).toEqual({ kind: "player", id: "a" });
+    expect(s.room).not.toBeNull();
+  });
+
   it("clears transient errors on the next room update", () => {
     let s = reduceServerMsg(initialRoomState, { type: "error", code: "NOT_HOST", message: "nope" }, 0);
     expect(s.status).toBe("connecting");

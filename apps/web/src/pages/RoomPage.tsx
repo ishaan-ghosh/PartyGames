@@ -6,7 +6,7 @@ import "../lobby/lobby.css";
 import { PhoneLobby } from "../lobby/PhoneLobby";
 import { ScreenLobby } from "../lobby/ScreenLobby";
 import { GameStage } from "../stage/GameStage";
-import { FATAL_ERRORS } from "../net/roomState";
+import { FATAL_ERRORS, JOIN_FAILURES } from "../net/roomState";
 import { useRoom, type HelloInfo } from "../net/useRoom";
 import { Fatal } from "./Fatal";
 import { JoinForm } from "./JoinForm";
@@ -34,7 +34,8 @@ function RoomSession({ code: raw, onRejoin }: { code: string; onRejoin(): void }
 
   useEffect(() => {
     if (!r.error || r.you) return;
-    if (r.error.code === "NAME_TAKEN" || r.error.code === "BAD_MESSAGE") {
+    // Our hello was rejected (also after a stale-token reconnect; the reducer then drops `you`).
+    if (JOIN_FAILURES.has(r.error.code)) {
       setNameError(r.error.message);
       setHello(null);
     }
@@ -79,10 +80,28 @@ function RoomSession({ code: raw, onRejoin }: { code: string; onRejoin(): void }
   // Nothing below renders until `you` is set, so every send has a welcomed (or welcoming) outbox.
   const isHost = r.room.hostId === r.you.id;
   const online = r.status === "open";
+  const belowMin = r.room.phase === "playing" && r.room.belowMin;
   return (
-    <div className={`room-view ${r.you.kind === "screen" ? "screen-view" : "phone-view"}`}>
-      {r.status === "reconnecting" && <Banner tone="warn" floating>Reconnecting…</Banner>}
-      {r.error && <Banner tone="bad" floating>{r.error.message}</Banner>}
+    <main className={`room-view ${r.you.kind === "screen" ? "screen-view" : "phone-view"}`}>
+      {/* One fixed stack, so notices never hide each other. */}
+      <div className="banner-stack">
+        {r.status === "reconnecting" && <Banner tone="warn">Reconnecting…</Banner>}
+        {r.error && <Banner tone="bad">{r.error.message}</Banner>}
+        {belowMin && (
+          <Banner
+            tone="warn"
+            action={
+              isHost ? (
+                <Button variant="secondary" disabled={!online} onClick={() => r.sendHost({ cmd: "endGame" })}>
+                  End game
+                </Button>
+              ) : undefined
+            }
+          >
+            Not enough players connected.
+          </Banner>
+        )}
+      </div>
       {r.room.phase === "lobby" ? (
         r.you.kind === "screen" ? (
           <ScreenLobby room={r.room} isHost={isHost} online={online} sendHost={r.sendHost} />
@@ -92,6 +111,6 @@ function RoomSession({ code: raw, onRejoin }: { code: string; onRejoin(): void }
       ) : (
         <GameStage r={r} isHost={isHost} />
       )}
-    </div>
+    </main>
   );
 }

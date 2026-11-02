@@ -1,7 +1,7 @@
 import type { HostCommand, RoomSnapshot, You } from "@party/shared";
 import { Button, PlayerChip } from "@party/ui";
 import { QRCodeSVG } from "qrcode.react";
-import { useState } from "react";
+import { Fragment, useState } from "react";
 import { clientGames } from "../games";
 import { publicOrigin } from "../lib/origin";
 import { HostPanel } from "./HostPanel";
@@ -49,14 +49,16 @@ export function PhoneLobby({ room, you, isHost, online, sendHost }: {
       <h3>Players</h3>
       <div className="players-list">
         {room.players.map((p) => (
-          <PlayerChip
-            key={p.id}
-            data-testid="lobby-player"
-            name={p.name}
-            avatar={p.avatar}
-            dim={!p.connected}
-            badge={p.isHost ? "host" : undefined}
-          />
+          <Fragment key={p.id}>
+            <PlayerChip
+              data-testid="lobby-player"
+              name={p.name}
+              avatar={p.avatar}
+              dim={!p.connected}
+              badge={p.isHost ? "host" : undefined}
+            />
+            {!p.connected && <span className="sr-only">(offline)</span>}
+          </Fragment>
         ))}
       </div>
     </div>
