@@ -1,5 +1,5 @@
 import { isRoomCode, normalizeRoomCode } from "@party/shared";
-import { Banner } from "@party/ui";
+import { Banner, Button } from "@party/ui";
 import { useEffect, useState } from "react";
 import { storage } from "../lib/storage";
 import "../lobby/lobby.css";
@@ -17,7 +17,16 @@ function initialHello(code: string): HelloInfo | null {
   return storage.getToken(code, "player") && profile ? { role: "player", ...profile } : null;
 }
 
-export function RoomPage({ code: raw }: { code: string }) {
+/**
+ * Each attempt is a fresh mount of RoomSession, so "Rejoin here" after REPLACED resets the room state
+ * (the fatal error would otherwise stick) and opens a new socket and Outbox.
+ */
+export function RoomPage({ code }: { code: string }) {
+  const [attempt, setAttempt] = useState(0);
+  return <RoomSession key={attempt} code={code} onRejoin={() => setAttempt((n) => n + 1)} />;
+}
+
+function RoomSession({ code: raw, onRejoin }: { code: string; onRejoin(): void }) {
   const code = normalizeRoomCode(raw);
   const [hello, setHello] = useState<HelloInfo | null>(() => initialHello(code));
   const [nameError, setNameError] = useState<string | null>(null);
@@ -48,6 +57,19 @@ export function RoomPage({ code: raw }: { code: string }) {
           storage.setRole(code, "screen");
           setHello({ role: "screen" });
         }}
+      />
+    );
+  }
+  if (r.error?.code === "REPLACED") {
+    // Our token is still valid (the other tab uses it), so rejoining here takes the seat back.
+    return (
+      <Fatal
+        message="This seat was opened on another tab or device."
+        action={
+          <Button size="lg" data-testid="rejoin" onClick={onRejoin}>
+            Use this device instead
+          </Button>
+        }
       />
     );
   }

@@ -3,7 +3,7 @@ import PartySocket from "partysocket";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { storage } from "../lib/storage";
 import { Outbox } from "./outbox";
-import { FATAL_ERRORS, initialRoomState, reduceServerMsg, type ClientRoomState } from "./roomState";
+import { FATAL_ERRORS, forgetOnFatalError, initialRoomState, reduceServerMsg, type ClientRoomState } from "./roomState";
 
 export interface HelloInfo { role: "screen" | "player"; name?: string; avatar?: Avatar }
 export interface RoomConnection extends ClientRoomState {
@@ -70,9 +70,7 @@ export function useRoom(code: string, hello: HelloInfo | null): RoomConnection {
       }
       if (msg.type === "welcome") storage.setToken(code, hello.role, msg.token);
       if (msg.type === "error" && FATAL_ERRORS.has(msg.code)) {
-        if (msg.code === "KICKED") storage.clearToken(code, hello.role);
-        // The room is gone and its code may be reused: forget our seat, role and host key for it.
-        if (msg.code === "ROOM_NOT_FOUND") storage.clearRoom(code);
+        forgetOnFatalError(storage, code, hello.role, msg.code);
         outbox.clear();
         ws.close(); // stops PartySocket from reconnecting
       }

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { RoomSnapshot } from "@party/shared";
-import { initialRoomState, reduceServerMsg } from "./roomState";
+import { FATAL_ERRORS, forgetOnFatalError, initialRoomState, reduceServerMsg } from "./roomState";
 
 const room = (phase: "lobby" | "playing"): RoomSnapshot => ({
   code: "ABCD", hostId: "a", mode: "phones", phase, gameId: "doodle-dash", settings: {},
@@ -44,10 +44,52 @@ describe("reduceServerMsg", () => {
     expect(s.error?.code).toBe("ROOM_NOT_FOUND");
   });
 
+  it("treats REPLACED as fatal: closed, and kept across later room updates", () => {
+    let s = reduceServerMsg(
+      { ...initialRoomState, status: "open" },
+      { type: "error", code: "REPLACED", message: "This seat was opened on another tab or device." },
+      0,
+    );
+    expect(FATAL_ERRORS.has("REPLACED")).toBe(true);
+    expect(s.status).toBe("closed");
+    s = reduceServerMsg(s, { type: "room", room: room("lobby"), now: 0 }, 0);
+    expect(s.error?.code).toBe("REPLACED");
+    expect(s.status).toBe("closed");
+  });
+
   it("clears transient errors on the next room update", () => {
     let s = reduceServerMsg(initialRoomState, { type: "error", code: "NOT_HOST", message: "nope" }, 0);
     expect(s.status).toBe("connecting");
     s = reduceServerMsg(s, { type: "room", room: room("lobby"), now: 0 }, 0);
     expect(s.error).toBeNull();
+  });
+});
+
+describe("forgetOnFatalError", () => {
+  const spyStore = () => {
+    const calls: string[] = [];
+    return {
+      calls,
+      clearToken: (code: string, role: string) => void calls.push(`clearToken ${code} ${role}`),
+      clearRoom: (code: string) => void calls.push(`clearRoom ${code}`),
+    };
+  };
+
+  it("keeps the token on REPLACED: the other tab or device is using it", () => {
+    const store = spyStore();
+    forgetOnFatalError(store, "ABCD", "player", "REPLACED");
+    expect(store.calls).toEqual([]);
+  });
+
+  it("forgets the seat when kicked", () => {
+    const store = spyStore();
+    forgetOnFatalError(store, "ABCD", "player", "KICKED");
+    expect(store.calls).toEqual(["clearToken ABCD player"]);
+  });
+
+  it("forgets the whole room when it's gone", () => {
+    const store = spyStore();
+    forgetOnFatalError(store, "ABCD", "screen", "ROOM_NOT_FOUND");
+    expect(store.calls).toEqual(["clearRoom ABCD"]);
   });
 });
