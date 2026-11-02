@@ -13,6 +13,18 @@ describe("reduceServerMsg", () => {
     expect(s.you).toEqual({ kind: "player", id: "a" });
   });
 
+  it("is only open once the server has welcomed this connection", () => {
+    const reconnecting = { ...initialRoomState, status: "reconnecting" as const };
+    const s = reduceServerMsg(reconnecting, { type: "welcome", token: "t", you: { kind: "player", id: "a" } }, 0);
+    expect(s.status).toBe("open");
+  });
+
+  it("stays closed if a welcome arrives after a fatal error", () => {
+    const closed = { ...initialRoomState, status: "closed" as const };
+    const s = reduceServerMsg(closed, { type: "welcome", token: "t", you: { kind: "player", id: "a" } }, 0);
+    expect(s.status).toBe("closed");
+  });
+
   it("tracks the server clock offset", () => {
     const s = reduceServerMsg(initialRoomState, { type: "room", room: room("lobby"), now: 10_500 }, 10_000);
     expect(s.clockOffset).toBe(500);

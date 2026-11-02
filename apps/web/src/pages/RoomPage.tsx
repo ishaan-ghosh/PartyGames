@@ -1,7 +1,11 @@
 import { isRoomCode, normalizeRoomCode } from "@party/shared";
-import { Banner, PlayerChip } from "@party/ui";
+import { Banner } from "@party/ui";
 import { useEffect, useState } from "react";
 import { storage } from "../lib/storage";
+import "../lobby/lobby.css";
+import { PhoneLobby } from "../lobby/PhoneLobby";
+import { ScreenLobby } from "../lobby/ScreenLobby";
+import { GameStage } from "../stage/GameStage";
 import { FATAL_ERRORS } from "../net/roomState";
 import { useRoom, type HelloInfo } from "../net/useRoom";
 import { Fatal } from "./Fatal";
@@ -50,15 +54,22 @@ export function RoomPage({ code: raw }: { code: string }) {
   if (r.error && FATAL_ERRORS.has(r.error.code)) return <Fatal message={r.error.message} />;
   if (!r.room || !r.you) return <div className="center"><p className="loading">Connecting…</p></div>;
 
+  // Nothing below renders until `you` is set, so every send has a welcomed (or welcoming) outbox.
+  const isHost = r.room.hostId === r.you.id;
+  const online = r.status === "open";
   return (
-    <main className="center">
+    <div className={`room-view ${r.you.kind === "screen" ? "screen-view" : "phone-view"}`}>
       {r.status === "reconnecting" && <Banner tone="warn" floating>Reconnecting…</Banner>}
-      <div className="card">
-        <h1>Room {r.room.code}</h1>
-        {r.room.players.map((p) => (
-          <PlayerChip key={p.id} data-testid="lobby-player" name={p.name} avatar={p.avatar} dim={!p.connected} />
-        ))}
-      </div>
-    </main>
+      {r.error && <Banner tone="bad" floating>{r.error.message}</Banner>}
+      {r.room.phase === "lobby" ? (
+        r.you.kind === "screen" ? (
+          <ScreenLobby room={r.room} isHost={isHost} online={online} sendHost={r.sendHost} />
+        ) : (
+          <PhoneLobby room={r.room} you={r.you} isHost={isHost} online={online} sendHost={r.sendHost} />
+        )
+      ) : (
+        <GameStage r={r} isHost={isHost} />
+      )}
+    </div>
   );
 }

@@ -18,7 +18,8 @@ export const initialRoomState: ClientRoomState = {
 export function reduceServerMsg(s: ClientRoomState, msg: ServerMsg, localNow: number): ClientRoomState {
   switch (msg.type) {
     case "welcome":
-      return { ...s, you: msg.you, error: null };
+      // "open" means welcomed: only then can host commands be sent (see Outbox.sendNow).
+      return { ...s, you: msg.you, error: null, status: s.status === "closed" ? "closed" : "open" };
     case "room":
       return {
         ...s,

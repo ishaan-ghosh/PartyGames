@@ -1,0 +1,52 @@
+.lobby-bg { position: fixed; inset: 0; z-index: -1; opacity: 0.55; }
+.lobby-screen { min-height: 100%; display: grid; grid-template-columns: minmax(320px, 1fr) 2fr; gap: var(--space-6); padding: 5vh 5vw; align-items: start; }
+.code-panel { display: grid; justify-items: center; gap: var(--space-4); text-align: center; position: sticky; top: 5vh; }
+.room-code { font: 700 clamp(4rem, 9vw, 8rem)/1 var(--font-display); letter-spacing: 0.12em; color: var(--accent); }
+.qr { background: #fff; padding: var(--space-3); border-radius: var(--radius); line-height: 0; }
+.code-hint { color: var(--text-dim); }
+.players-panel { display: grid; gap: var(--space-5); }
+.players-panel h2 { font-size: clamp(2rem, 3.5vw, 3rem); }
+.players-grid { display: flex; flex-wrap: wrap; gap: var(--space-3); }
+.waiting { color: var(--text-dim); font: 600 1.5rem var(--font-display); }
+.host-panel { display: grid; gap: var(--space-4); }
+.game-library { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: var(--space-3); }
+.game-card { --card-accent: var(--violet); display: grid; gap: var(--space-1); justify-items: start; text-align: left; padding: var(--space-4); border-radius: var(--radius); border: 2px solid var(--line); background: var(--bg-raised-2); color: var(--text); font: inherit; cursor: pointer; transition: transform 0.2s var(--ease-spring), border-color 0.2s; }
+.game-card.on { border-color: var(--card-accent); transform: translateY(-3px); box-shadow: 0 8px 24px color-mix(in srgb, var(--card-accent) 35%, transparent); }
+.game-card:disabled { cursor: not-allowed; opacity: 0.6; }
+.game-card:focus-visible { outline: 3px solid var(--focus); outline-offset: 3px; }
+.game-card strong { font: 600 1.15rem var(--font-display); }
+.game-emoji { font-size: 2rem; }
+.game-tagline { color: var(--text-dim); font-size: 0.9rem; }
+.game-card-soon { opacity: 0.45; cursor: default; }
+.results ol { list-style: none; margin: var(--space-3) 0 0; padding: 0; display: grid; gap: var(--space-2); }
+.results li { display: grid; grid-template-columns: 2.5rem 1fr auto; align-items: center; font: 600 1.2rem var(--font-display); animation: chip-in 0.4s var(--ease-spring) both; }
+.results-score { color: var(--accent); }
+.phone { min-height: 100%; display: grid; align-content: start; gap: var(--space-4); padding: max(var(--space-4), env(safe-area-inset-top)) var(--space-4) calc(var(--space-6) + env(safe-area-inset-bottom)); max-width: 560px; margin: 0 auto; }
+.phone-header { display: flex; align-items: baseline; gap: var(--space-2); }
+.room-code-sm { font: 700 1.6rem var(--font-display); letter-spacing: 0.15em; color: var(--accent); }
+.qr-phone { display: grid; justify-items: center; gap: var(--space-2); background: #fff; color: #0f0e17; }
+.waiting-card { display: grid; gap: var(--space-2); text-align: center; }
+.waiting-game { font: 600 1.4rem var(--font-display); }
+.players-list { display: flex; flex-wrap: wrap; gap: var(--space-2); }
+.stage { min-height: 100%; }
+.host-bar { position: fixed; left: max(12px, env(safe-area-inset-left)); bottom: max(12px, env(safe-area-inset-bottom)); display: flex; gap: var(--space-2); z-index: 40; opacity: 0.6; transition: opacity 0.2s; }
+.host-bar:hover, .host-bar:focus-within { opacity: 1; }
+.host-bar button { min-height: 48px; padding: 0 var(--space-4); border-radius: 999px; border: 0; background: var(--bg-raised-2); color: var(--text); font: 600 0.95rem var(--font-display); cursor: pointer; }
+.host-bar button:disabled { opacity: 0.45; cursor: not-allowed; }
+.host-bar button:focus-visible { outline: 3px solid var(--focus); outline-offset: 3px; }
+@media (max-width: 900px) {
+  .lobby-screen { grid-template-columns: 1fr; }
+  .code-panel { position: static; }
+}
+
+/*
+ * Room view wrappers. `display: contents` keeps them out of layout (children still size against #root),
+ * but they let us scope screen-only rules.
+ */
+.room-view { display: contents; }
+
+/* Screen: important UI stays inside a 5% edge margin (Global Constraint), including floating chrome. */
+.screen-view .banner-floating { top: max(5vh, env(safe-area-inset-top)); max-width: 90vw; }
+.screen-view .host-bar { left: max(5vw, env(safe-area-inset-left)); bottom: max(5vh, env(safe-area-inset-bottom)); }
+/* The mute toggle is rendered by App, outside the room view. */
+body:has(.screen-view) .mute-floating { right: max(5vw, env(safe-area-inset-right)); bottom: max(5vh, env(safe-area-inset-bottom)); }
