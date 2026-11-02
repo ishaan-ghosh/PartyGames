@@ -68,3 +68,71 @@ describe("Outbox", () => {
     expect(sent).toEqual(["q"]);
   });
 });
+
+describe("Outbox staleness", () => {
+  it("drops queued messages older than the time-to-live when flushed", () => {
+    const { sent, transmit } = collect();
+    let t = 0;
+    const ob = new Outbox(transmit, 50, 2000, () => t);
+    ob.send("old");
+    t = 1500;
+    ob.send("fresh");
+    t = 2500;
+    ob.welcome();
+    expect(sent).toEqual(["fresh"]);
+  });
+
+  it("keeps messages that are exactly at the time-to-live", () => {
+    const { sent, transmit } = collect();
+    let t = 0;
+    const ob = new Outbox(transmit, 50, 2000, () => t);
+    ob.send("edge");
+    t = 2000;
+    ob.welcome();
+    expect(sent).toEqual(["edge"]);
+  });
+
+  it("defaults to a time-to-live of about 2 seconds", () => {
+    const { sent, transmit } = collect();
+    let t = 0;
+    const ob = new Outbox(transmit, 50, undefined, () => t);
+    ob.send("a");
+    t = 1999;
+    ob.send("b");
+    t = 3000;
+    ob.welcome();
+    expect(sent).toEqual(["b"]);
+  });
+});
+
+describe("Outbox.sendNow (never queued)", () => {
+  it("sends immediately once welcomed", () => {
+    const { sent, transmit } = collect();
+    const ob = new Outbox(transmit);
+    ob.welcome();
+    expect(ob.sendNow("skip")).toBe(true);
+    expect(sent).toEqual(["skip"]);
+  });
+
+  it("drops the message while not welcomed, and never sends it later", () => {
+    const { sent, transmit } = collect();
+    const ob = new Outbox(transmit);
+    expect(ob.sendNow("start")).toBe(false);
+    ob.welcome();
+    ob.closed();
+    expect(ob.sendNow("kick")).toBe(false);
+    ob.welcome();
+    expect(sent).toEqual([]);
+  });
+
+  it("drops the message when the transport can't send it", () => {
+    const sent: string[] = [];
+    let open = false;
+    const ob = new Outbox((m) => (open ? (sent.push(m), true) : false));
+    ob.welcome();
+    expect(ob.sendNow("skip")).toBe(false);
+    open = true;
+    ob.welcome();
+    expect(sent).toEqual([]);
+  });
+});
