@@ -96,6 +96,23 @@ describe("pause between turns", () => {
     expect(s.paused).toBe(true);
   });
 
+  it("ends a paused final round when the last drawer leaves and someone who already drew returns", () => {
+    let s = drawing("banana", 3, { rounds: 1 });
+    s = onSkip(s, 1000);
+    s = onTimer(s, 6000); // p2 draws
+    expect(s.drawerId).toBe("p2");
+    setConnected(s, ["p3"]); // only the last drawer is online
+    s = onSkip(s, 7000);
+    s = onTimer(s, 12_000);
+    expect(s.paused).toBe(true);
+    s.connected.p3 = false; // the last drawer leaves too
+    s.connected.p1 = true; // p1, who already drew, comes back
+    expect(resumeIfReady(s, 13_000)).toBe(true);
+    expect(s.phase).toBe("over");
+    expect(s.paused).toBe(false);
+    expect(nextTimerAt(s)).toBeNull();
+  });
+
   it("keeps a running turn going when players drop below two", () => {
     const s = drawing("banana");
     setConnected(s, ["p1"]);

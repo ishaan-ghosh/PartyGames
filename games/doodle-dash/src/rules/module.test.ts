@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { doodleDash, type DoodleView } from "./index";
 import { drawing, start } from "./testkit";
+import { INK_LIMIT } from "./types";
 
 const { parseAction, view, onAction, onPresence, onSkip, onTimer, nextTimerAt, isOver, results } = doodleDash;
 
@@ -126,5 +127,59 @@ describe("doodleDash module: pause and resume", () => {
     s = onPresence(s, "p2", true, 22_000);
     expect(isOver(s)).toBe(true);
     expect(nextTimerAt(s)).toBeNull();
+  });
+});
+
+describe("doodleDash module: input hardening", () => {
+  const begin = (points: number[]) => ({ t: "strokeBegin", tool: "pen", color: 0, size: 0, points });
+
+  it("rejects NaN and infinite coordinates", () => {
+    for (const v of [Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY]) {
+      expect(parseAction(begin([v, 0.5]))).toBeNull();
+      expect(parseAction({ t: "strokeAppend", points: [0.5, v] })).toBeNull();
+      expect(parseAction({ t: "fill", color: 0, x: v, y: 0.5 })).toBeNull();
+    }
+  });
+
+  it("rejects an odd-length strokeAppend", () => {
+    expect(parseAction({ t: "strokeAppend", points: [0.1, 0.2, 0.3] })).toBeNull();
+  });
+
+  it("accepts exactly 400 values per batch and rejects 402", () => {
+    expect(parseAction({ t: "strokeAppend", points: Array(400).fill(0.5) })).not.toBeNull();
+    expect(parseAction(begin(Array(400).fill(0.5)))).not.toBeNull();
+    expect(parseAction({ t: "strokeAppend", points: Array(402).fill(0.5) })).toBeNull();
+    expect(parseAction(begin(Array(402).fill(0.5)))).toBeNull();
+  });
+
+  it("strips unknown extra keys", () => {
+    expect(parseAction({ t: "guess", text: "hi", evil: true })).toEqual({ t: "guess", text: "hi" });
+    expect(parseAction({ t: "undo", strokeId: 5 })).toEqual({ t: "undo" });
+  });
+
+  it("ignores a spectator's strokes", () => {
+    const s = drawing("banana");
+    const r = onAction(s, "zz", { t: "strokeBegin", tool: "pen", color: 0, size: 0, points: [0, 0] }, 0);
+    expect(r.events).toBeUndefined();
+    expect(s.strokes).toEqual([]);
+  });
+
+  it("rejects a batch that would overflow the ink limit by part of it", () => {
+    const s = drawing("banana");
+    s.ink = INK_LIMIT - 1;
+    const r = onAction(s, "p1", { t: "strokeBegin", tool: "pen", color: 0, size: 0, points: [0.1, 0.1] }, 0);
+    expect(r.events).toBeUndefined();
+    expect(s.strokes).toEqual([]);
+    expect(s.ink).toBe(INK_LIMIT - 1);
+  });
+
+  it("relays the stroke and asks for a rebroadcast when only a hint was due", () => {
+    const s = drawing("banana"); // first hint at 40_000
+    const r = onAction(s, "p1", { t: "strokeBegin", tool: "pen", color: 0, size: 0, points: [0.1, 0.1] }, 40_000);
+    expect(s.phase).toBe("drawing");
+    expect(s.revealed).toHaveLength(1);
+    expect(r.quiet).toBe(false);
+    expect(r.events).toHaveLength(1);
+    expect(r.events?.[0]?.payload).toMatchObject({ op: "begin" });
   });
 });
