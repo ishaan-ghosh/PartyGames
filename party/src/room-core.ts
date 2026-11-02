@@ -284,6 +284,7 @@ export class RoomCore {
     this.out.send(connId, { type: "welcome", token: m.token, you: { kind: m.kind, id: m.id } });
     if (this.s.phase === "playing" && m.kind === "player") {
       this.s.gameState = this.game.onPresence(this.s.gameState, m.id, true, now);
+      this.checkOver(); // a reconnect can resume a paused game straight into its end
     }
     this.broadcast(now);
     return YES;
