@@ -1,0 +1,95 @@
+/* ---- Screen (TV / laptop): everything important stays inside a 5% edge margin ---- */
+.dd-screen { height: 100vh; height: 100dvh; overflow: hidden; display: grid; grid-template-rows: auto minmax(0, 1fr); gap: 2vh; padding: 5vh 5vw; }
+.dd-top { display: flex; align-items: center; justify-content: space-between; gap: var(--space-5); min-height: 88px; }
+.dd-round { font: 600 1.3rem var(--font-display); color: var(--text-dim); white-space: nowrap; }
+.dd-hint { display: flex; flex-wrap: wrap; justify-content: center; gap: 0.3em; font: 700 1.6rem var(--font-display); }
+.dd-hint-big { font-size: clamp(2rem, 3.4vw, 3.2rem); }
+.dd-letter { min-width: 0.85em; text-align: center; border-bottom: 0.12em solid var(--game-accent); line-height: 1.25; }
+.dd-gap { width: 0.6em; }
+.dd-stage { display: grid; grid-template-columns: minmax(0, 1fr) minmax(280px, 26vw); gap: 2vw; min-height: 0; }
+/* 90vh of usable height − 88px header − 2vh gap, kept at 4:3. */
+.dd-canvas-wrap { position: relative; width: 100%; max-width: calc((88vh - 88px) * 4 / 3); margin: 0 auto; align-self: center; border-radius: var(--radius-lg); overflow: hidden; box-shadow: var(--shadow); background: #fff; }
+.dd-canvas { display: block; width: 100%; height: auto; aspect-ratio: 4 / 3; background: #fff; -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
+.dd-canvas-draw { touch-action: none; border-radius: var(--radius); box-shadow: var(--shadow); cursor: crosshair; }
+.dd-overlay { position: absolute; inset: 0; display: grid; place-content: center; justify-items: center; gap: var(--space-3); padding: var(--space-4); text-align: center; background: rgba(15, 14, 23, 0.84); color: var(--text); font: 600 1.5rem var(--font-display); animation: dd-fade 0.3s ease-out; }
+.dd-overlay p { margin: 0; }
+.dd-reveal-word { font: 700 clamp(2.4rem, 5vw, 4.5rem) var(--font-display); color: var(--warn); animation: chip-in 0.5s var(--ease-spring); }
+.dd-gains { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--space-1); font-size: 1.15rem; }
+.dd-gains strong { color: var(--good); }
+.dd-side { display: grid; grid-template-rows: auto minmax(0, 1fr); gap: var(--space-4); min-height: 0; }
+.dd-scores { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--space-2); }
+.dd-score-row { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); padding: var(--space-2) var(--space-4); border-radius: var(--radius); background: var(--bg-raised); font: 600 1.15rem var(--font-display); }
+.dd-score-row.solved { background: #0f3324; }
+.dd-score-row.drawer { box-shadow: inset 0 0 0 2px var(--game-accent); }
+.dd-score-num { font-weight: 700; font-size: 1.3rem; }
+.dd-feed { min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 6px; padding: var(--space-3); background: var(--bg-sunken); border-radius: var(--radius); }
+.dd-feed-compact { max-height: 30vh; min-height: 96px; overscroll-behavior: contain; }
+.dd-feed-item { margin: 0; line-height: 1.35; overflow-wrap: anywhere; }
+.dd-feed-item b { color: var(--text-dim); }
+.dd-feed-correct { color: var(--good); font-weight: 700; }
+.dd-feed-close { color: var(--warn); font-weight: 600; }
+.dd-feed-system { color: var(--text-dim); font-style: italic; }
+
+/* ---- Waiting for players (game paused between turns) ---- */
+.dd-waiting { display: grid; justify-items: center; gap: var(--space-2); text-align: center; }
+.dd-waiting-card { padding: var(--space-4); border-radius: var(--radius); background: #3d3510; color: var(--warn); }
+.dd-waiting-title { margin: 0; font: 700 1.5rem var(--font-display); }
+.dd-overlay .dd-waiting-title { font-size: clamp(1.8rem, 3.6vw, 3.2rem); color: var(--warn); }
+.dd-waiting-sub, .dd-waiting-away { margin: 0; font: 500 1rem var(--font-body); color: var(--text-dim); }
+.dd-waiting-card .dd-waiting-sub, .dd-waiting-card .dd-waiting-away { color: inherit; opacity: 0.85; }
+.dd-wait-pill { display: inline-flex; align-items: center; gap: var(--space-2); padding: 0 var(--space-3); border-radius: 999px; background: #3d3510; color: var(--warn); font: 700 1rem var(--font-display); }
+.dd-wait-dot { width: 10px; height: 10px; border-radius: 50%; background: currentColor; animation: pulse 1.2s infinite; }
+
+/* ---- Phone ---- */
+.dd-phone { gap: var(--space-3); }
+.dd-phone-top { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); }
+.dd-myscore { font: 700 1.3rem var(--font-display); }
+.dd-phone-draw { overscroll-behavior: none; }
+/* Keep the drawing canvas short enough that the tools fit below it without scrolling. */
+.dd-phone-draw .dd-canvas-draw { width: min(100%, max(240px, calc((100dvh - 380px) * 4 / 3))); margin: 0 auto; }
+html.dd-no-overscroll, html.dd-no-overscroll body { overscroll-behavior: none; }
+.dd-secret { margin: 0; text-align: center; font: 600 1.15rem var(--font-display); }
+.dd-secret strong { color: var(--warn); font-size: 1.6rem; }
+.dd-title { text-align: center; }
+.dd-choices { display: grid; gap: var(--space-3); }
+.dd-note { margin: 0; text-align: center; color: var(--text-dim); font: 600 1.15rem var(--font-display); }
+.dd-solved { text-align: center; background: #0f3324; color: #8ff0c4; padding: var(--space-3); border-radius: var(--radius); font-weight: 700; }
+/* Sits above the shell's fixed bottom chrome (host bar, mute toggle). */
+.dd-guess { position: sticky; bottom: var(--stage-chrome-bottom, 0px); z-index: 1; display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: var(--space-2); padding: var(--space-2) 0; background: var(--bg); }
+.dd-guess input { min-height: 48px; min-width: 0; }
+
+/* ---- Drawing tools: every control ≥ 48px with a visible keyboard focus ring ---- */
+.dd-pad { display: grid; gap: var(--space-3); }
+.dd-tools { display: grid; gap: var(--space-2); }
+.dd-palette { display: grid; grid-template-columns: repeat(auto-fill, minmax(48px, 1fr)); gap: 6px; }
+.dd-swatch { min-width: 48px; min-height: 48px; border-radius: var(--radius-sm); border: 3px solid var(--line); cursor: pointer; transition: transform 0.15s var(--ease-spring); }
+.dd-swatch.on { border-color: var(--text); transform: scale(1.06); }
+.dd-toolrow { display: flex; flex-wrap: wrap; gap: 6px; }
+.dd-tool, .dd-size { min-width: 48px; min-height: 48px; display: grid; place-items: center; border: 0; border-radius: var(--radius-sm); background: var(--bg-raised-2); color: var(--text); font-size: 1.3rem; cursor: pointer; }
+.dd-tool.on, .dd-size.on { background: var(--game-accent); }
+.dd-size span { display: block; border-radius: 50%; background: var(--text); }
+.dd-swatch:focus-visible, .dd-tool:focus-visible, .dd-size:focus-visible,
+.stepper button:focus-visible, .segmented button:focus-visible { outline: 3px solid var(--focus); outline-offset: 3px; }
+
+/* ---- Settings form ---- */
+.dd-settings { display: grid; gap: var(--space-4); }
+.dd-settings select { min-height: 48px; }
+.dd-field { display: grid; gap: var(--space-2); }
+.dd-field-label { font-weight: 600; color: var(--text-dim); }
+.dd-hint-text { font-weight: 400; font-size: 0.85rem; }
+.stepper { display: flex; align-items: center; gap: var(--space-3); }
+.stepper button { width: 48px; height: 48px; border-radius: 50%; border: 0; background: var(--bg-raised-2); color: var(--text); font-size: 1.5rem; cursor: pointer; }
+.stepper button:disabled { opacity: 0.4; }
+.stepper span { min-width: 2ch; text-align: center; font: 700 1.5rem var(--font-display); }
+.segmented { display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px; padding: 4px; background: var(--bg-sunken); border-radius: var(--radius); }
+.segmented button { min-height: 48px; border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--text-dim); font: 600 0.95rem var(--font-display); text-transform: capitalize; cursor: pointer; }
+.segmented button.on { background: var(--game-accent); color: #fff; }
+
+@keyframes dd-fade { from { opacity: 0; } }
+@media (prefers-reduced-motion: reduce) {
+  .dd-overlay, .dd-reveal-word, .dd-wait-dot { animation: none; }
+}
+@media (max-width: 900px) {
+  .dd-screen { height: auto; min-height: 100vh; overflow: visible; }
+  .dd-stage { grid-template-columns: 1fr; }
+}

@@ -1,0 +1,91 @@
+import { describe, expect, it } from "vitest";
+import { MAX_POINTS_PER_BATCH, type Stroke } from "../rules";
+import { applyOp, chunkPoints, floodFillData, hexToRgb, normalizePoint } from "./strokes";
+
+const pen = (id: number, points: number[]): Stroke => ({ id, tool: "pen", color: 0, size: 0, points });
+
+describe("applyOp", () => {
+  it("begins, appends, undoes and clears without mutating input", () => {
+    const a: Stroke[] = [];
+    const b = applyOp(a, { op: "begin", seq: 1, stroke: pen(1, [0, 0]) });
+    const c = applyOp(b, { op: "append", seq: 2, strokeId: 1, points: [0.5, 0.5] });
+    expect(a).toEqual([]);
+    expect(b[0]).toMatchObject({ points: [0, 0] });
+    expect(c[0]).toMatchObject({ points: [0, 0, 0.5, 0.5] });
+    expect(applyOp(c, { op: "undo", seq: 3 })).toEqual([]);
+    expect(applyOp(c, { op: "clear", seq: 3 })).toEqual([]);
+  });
+
+  it("ignores appends for a stroke that is not the latest", () => {
+    const s = [pen(1, [0, 0]), pen(2, [1, 1])];
+    expect(applyOp(s, { op: "append", seq: 3, strokeId: 1, points: [0.5, 0.5] })).toBe(s);
+  });
+
+  it("ignores appends onto a fill", () => {
+    const s: Stroke[] = [{ id: 1, tool: "fill", color: 0, x: 0.5, y: 0.5 }];
+    expect(applyOp(s, { op: "append", seq: 2, strokeId: 1, points: [0.5, 0.5] })).toBe(s);
+  });
+});
+
+describe("floodFillData", () => {
+  it("fills the connected region and stops at walls", () => {
+    // 3x3 white image with a black vertical wall in the middle column
+    const w = 3, h = 3;
+    const data = new Uint8ClampedArray(w * h * 4).fill(255);
+    for (let y = 0; y < h; y++) data.set([0, 0, 0, 255], (y * w + 1) * 4);
+    floodFillData(data, w, h, 0, 0, [255, 0, 0]);
+    const px = (x: number, y: number) => Array.from(data.slice((y * w + x) * 4, (y * w + x) * 4 + 3));
+    expect(px(0, 2)).toEqual([255, 0, 0]);
+    expect(px(1, 1)).toEqual([0, 0, 0]);
+    expect(px(2, 0)).toEqual([255, 255, 255]);
+  });
+
+  it("does nothing when filling with the same color", () => {
+    const data = new Uint8ClampedArray(4).fill(255);
+    floodFillData(data, 1, 1, 0, 0, [255, 255, 255]);
+    expect(Array.from(data)).toEqual([255, 255, 255, 255]);
+  });
+
+  it("ignores a start point outside the image", () => {
+    const data = new Uint8ClampedArray(4).fill(255);
+    floodFillData(data, 1, 1, 5, -1, [0, 0, 0]);
+    expect(Array.from(data)).toEqual([255, 255, 255, 255]);
+  });
+
+  it("parses hex colors", () => {
+    expect(hexToRgb("#ff8906")).toEqual([255, 137, 6]);
+  });
+});
+
+describe("normalizePoint", () => {
+  const rect = { left: 100, top: 50, width: 400, height: 300 };
+
+  it("maps client coordinates into 0–1 on the canvas box", () => {
+    expect(normalizePoint(100, 50, rect)).toEqual([0, 0]);
+    expect(normalizePoint(300, 200, rect)).toEqual([0.5, 0.5]);
+    expect(normalizePoint(500, 350, rect)).toEqual([1, 1]);
+  });
+
+  it("clamps points dragged outside the canvas", () => {
+    expect(normalizePoint(0, 1000, rect)).toEqual([0, 1]);
+    expect(normalizePoint(9999, -20, rect)).toEqual([1, 0]);
+  });
+
+  it("returns the origin for a zero-size box instead of NaN", () => {
+    expect(normalizePoint(10, 10, { left: 0, top: 0, width: 0, height: 0 })).toEqual([0, 0]);
+  });
+});
+
+describe("chunkPoints", () => {
+  it("splits pending points into batches of at most MAX_POINTS_PER_BATCH, keeping x,y pairs", () => {
+    const pts = Array.from({ length: 1000 }, (_, i) => (i % 100) / 100);
+    const batches = chunkPoints(pts);
+    expect(batches.map((b) => b.length)).toEqual([MAX_POINTS_PER_BATCH, MAX_POINTS_PER_BATCH, 200]);
+    expect(batches.flat()).toEqual(pts);
+    for (const b of batches) expect(b.length % 2).toBe(0);
+  });
+
+  it("returns no batches for no points", () => {
+    expect(chunkPoints([])).toEqual([]);
+  });
+});
