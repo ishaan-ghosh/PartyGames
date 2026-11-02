@@ -1,7 +1,9 @@
 import { z } from "zod";
 import { BRUSH_SIZES, MAX_POINTS_PER_BATCH, PALETTE, type DoodleAction } from "./types";
 
-const coord = z.number().min(0).max(1);
+// Rounded to 3 decimals (0.8 px on the 800 px canvas) after validation to keep view messages and saved state small.
+const round3 = (v: number) => Math.min(1, Math.max(0, Math.round(v * 1000) / 1000));
+const coord = z.number().min(0).max(1).transform(round3);
 const color = z.number().int().min(0).max(PALETTE.length - 1);
 const points = (min: number) =>
   z.array(coord).min(min).max(MAX_POINTS_PER_BATCH).refine((a) => a.length % 2 === 0, "points must be x,y pairs");
