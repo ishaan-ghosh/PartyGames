@@ -1,0 +1,21 @@
+{
+  "name": "@party/server",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev -c wrangler.local.jsonc --port 8787",
+    "cf:deploy": "wrangler deploy",
+    "test": "vitest run && vitest run -c vitest.workers.config.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@party/doodle-dash": "workspace:*",
+    "@party/shared": "workspace:*",
+    "partyserver": "^0.5.10"
+  },
+  "devDependencies": {
+    "@cloudflare/vitest-pool-workers": "^0.23.0",
+    "@cloudflare/workers-types": "^5.20261102.1",
+    "wrangler": "^4.156.2"
+  }
+}

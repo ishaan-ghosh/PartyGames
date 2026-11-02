@@ -1,0 +1,10 @@
+packages:
+  - "apps/*"
+  - "games/*"
+  - "party"
+  - "shared"
+  - "ui"
+
+onlyBuiltDependencies:
+  - esbuild
+  - workerd

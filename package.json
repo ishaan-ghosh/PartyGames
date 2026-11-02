@@ -1,0 +1,28 @@
+{
+  "name": "party-games",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "dev": "pnpm --parallel --filter @party/web --filter @party/server dev",
+    "build": "pnpm --filter @party/web build",
+    "typecheck": "pnpm -r --if-present typecheck",
+    "test": "pnpm -r --if-present test",
+    "e2e": "playwright test",
+    "cf:deploy": "pnpm build && pnpm --filter @party/server cf:deploy"
+  },
+  "packageManager": "pnpm@10.34.9",
+  "devDependencies": {
+    "@playwright/test": "^1.64.1",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "typescript": "^7.0.2",
+    "vitest": "^4.1.12"
+  },
+  "dependencies": {
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1"
+  }
+}
