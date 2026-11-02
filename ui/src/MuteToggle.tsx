@@ -10,7 +10,7 @@ export function MuteToggle({ floating = false }: { floating?: boolean }) {
       aria-label="Mute sounds"
       aria-pressed={muted}
       onClick={() => {
-        unlockAudio();
+        void unlockAudio();
         setMuted(!muted);
         setState(!muted);
       }}

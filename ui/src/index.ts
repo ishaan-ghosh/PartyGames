@@ -3,17 +3,10 @@ import "@fontsource-variable/inter";
 import "@party/shared/tokens.css";
 import "./base.css";
 import "./ui.css";
-import { unlockAudio } from "./sound";
+import { installAudioUnlock } from "./sound";
 
-// iOS Safari only lets audio start from a user gesture: unlock on the first one.
-if (typeof document !== "undefined") {
-  const events = ["pointerdown", "keydown", "touchend"] as const;
-  const unlock = () => {
-    unlockAudio();
-    for (const e of events) document.removeEventListener(e, unlock, true);
-  };
-  for (const e of events) document.addEventListener(e, unlock, true);
-}
+// iOS Safari only lets audio start from a user activation: keep trying until it runs.
+if (typeof document !== "undefined") installAudioUnlock(document);
 
 export { Button, type ButtonProps } from "./Button";
 export { PlayerChip, type PlayerChipProps } from "./PlayerChip";

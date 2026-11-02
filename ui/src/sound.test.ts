@@ -38,3 +38,42 @@ describe("mute source of truth", () => {
     expect(Ctor).not.toHaveBeenCalled();
   });
 });
+
+describe("installAudioUnlock", () => {
+  beforeEach(() => vi.resetModules());
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("keeps listening on activation events until the context is running", async () => {
+    vi.stubGlobal("localStorage", { getItem: () => null, setItem: () => {} });
+    let allowRun = false;
+    class FakeContext {
+      state: string = "suspended";
+      destination = {};
+      resume = vi.fn(async () => {
+        if (allowRun) this.state = "running";
+      });
+      createBuffer = () => ({});
+      createBufferSource = () => ({ buffer: null, connect: () => {}, start: () => {} });
+    }
+    vi.stubGlobal("AudioContext", FakeContext);
+    const listeners = new Map<string, () => void>();
+    const target = {
+      addEventListener: vi.fn((t: string, fn: () => void) => void listeners.set(t, fn)),
+      removeEventListener: vi.fn((t: string) => void listeners.delete(t)),
+    };
+    const { installAudioUnlock } = await import("./sound");
+    installAudioUnlock(target as unknown as Document);
+    expect([...listeners.keys()].sort()).toEqual(["click", "keydown", "pointerup", "touchend"]);
+
+    // Activation that doesn't manage to start audio: stay attached.
+    listeners.get("touchend")!();
+    await new Promise((r) => setTimeout(r, 0));
+    expect(listeners.size).toBe(4);
+
+    // Next activation succeeds: detach everything.
+    allowRun = true;
+    listeners.get("click")!();
+    await new Promise((r) => setTimeout(r, 0));
+    expect(listeners.size).toBe(0);
+  });
+});
