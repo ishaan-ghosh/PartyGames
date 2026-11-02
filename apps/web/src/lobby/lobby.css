@@ -40,10 +40,12 @@
 }
 
 /*
- * Room view wrappers. `display: contents` keeps them out of layout (children still size against #root),
- * but they let us scope screen-only rules.
+ * Room view wrapper (the <main> landmark; it also scopes screen-only rules). A real box, not
+ * `display: contents`, which drops the landmark role in older Safari/Chromium. `height: 100%` gives
+ * children the same definite height #root did, so their `min-height: 100%` still resolves; taller
+ * content overflows visibly and the page scrolls exactly as before.
  */
-.room-view { display: contents; }
+.room-view { display: block; height: 100%; }
 
 .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
 
