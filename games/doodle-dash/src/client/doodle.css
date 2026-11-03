@@ -95,8 +95,10 @@ html.dd-no-overscroll, html.dd-no-overscroll body { overscroll-behavior: none; }
 /*
  * Portrait phones: the 12 colors wrap into two rows of 6 and the 6 tool buttons share one row, all
  * shrinking with the screen so nothing hides off the right edge. With 4px gaps a 320px-wide phone
- * still gets ~44×48px targets; wider phones get wider buttons, never taller ones. Landscape keeps
- * the single swipeable rows above, which spend less of the short height.
+ * still gets ~44×48px targets; wider phones get wider buttons, never taller ones. The ~44px width
+ * at 320px is a deliberate exception to the 48px target rule: it still meets the 44px minimum of
+ * Apple's HIG and WCAG 2.5.5, and the only alternative is controls hidden off-screen. Landscape
+ * keeps the single swipeable rows above, which spend less of the short height.
  */
 @media (orientation: portrait) {
   .dd-palette { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 4px; overflow: visible; touch-action: manipulation; }
