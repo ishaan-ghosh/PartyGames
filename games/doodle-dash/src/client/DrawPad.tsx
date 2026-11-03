@@ -2,7 +2,7 @@ import { useEffect, useId, useRef, useState, type Dispatch, type PointerEvent, t
 import { BRUSH_SIZES, PALETTE, type DoodleAction, type Stroke } from "../rules";
 import { CanvasView } from "./CanvasView";
 import { DebugOverlay, useDebugDraw } from "./debugDraw";
-import { SIDEWAYS_QUERY } from "./sideways";
+import { SIDEWAYS_QUERY, escapeClosesPanel, focusInPanel } from "./sideways";
 import { chunkPoints, fillBadge, fillsRemaining, firstStrokeKey, nextStrokeKey, normalizePoint } from "./strokes";
 import type { ActivityRef } from "./useStrokes";
 
@@ -18,6 +18,8 @@ const SIZE_NAMES = ["small", "medium", "large"];
 const TOOL_ICON: Record<Tool, string> = { pen: "✏️", eraser: "🧽", fill: "🪣" };
 const BATCH_MS = 40;
 const NO_OVERSCROLL = "dd-no-overscroll";
+
+const isSideways = () => typeof matchMedia !== "undefined" && matchMedia(SIDEWAYS_QUERY).matches;
 
 /** Stable send/flush/end helpers; they only touch refs, so timers and listeners can hold them. */
 interface PadIO {
@@ -42,6 +44,10 @@ export function DrawPad({ strokes, setStrokes, send, activity, fillsLeft: server
   // inline and ignores this, so closing it after a pick there is harmless.
   const [panelOpen, setPanelOpen] = useState(false);
   const panelId = useId();
+  const panelRef = useRef<HTMLDivElement>(null);
+  const toggleRef = useRef<HTMLButtonElement>(null);
+  // Set when the toggle opens the panel from the keyboard: focus then moves to its first control.
+  const focusPanel = useRef(false);
   const debug = useDebugDraw();
   const [fillsSent, setFillsSent] = useState(0); // this pad is mounted for one drawing turn
   const fillsLeft = fillsRemaining(serverFillsLeft, fillsSent);
@@ -106,11 +112,29 @@ export function DrawPad({ strokes, setStrokes, send, activity, fillsLeft: server
     return () => root.classList.remove(NO_OVERSCROLL);
   }, []);
 
-  // Escape closes the pull-out panel.
+  /**
+   * Close the pull-out panel. Sideways, the closed panel and the host bar it carries are
+   * display: none, so focus inside them would drop to <body>: hand it back to the toggle.
+   */
+  const closePanel = () => {
+    setPanelOpen(false);
+    if (isSideways() && focusInPanel(document.activeElement, panelRef.current)) toggleRef.current?.focus();
+  };
+  const closeRef = useRef(closePanel);
+  closeRef.current = closePanel;
+
+  // Opened from the keyboard: focus its first control. (A tap leaves focus alone.)
+  useEffect(() => {
+    if (!panelOpen || !focusPanel.current) return;
+    focusPanel.current = false;
+    if (isSideways()) panelRef.current?.querySelector<HTMLElement>("button:not(:disabled)")?.focus();
+  }, [panelOpen]);
+
+  // Escape closes the pull-out panel, but not when it closes a dialog opened over it.
   useEffect(() => {
     if (!panelOpen) return;
     const key = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setPanelOpen(false);
+      if (escapeClosesPanel(e)) closeRef.current();
     };
     window.addEventListener("keydown", key);
     return () => window.removeEventListener("keydown", key);
@@ -122,10 +146,10 @@ export function DrawPad({ strokes, setStrokes, send, activity, fillsLeft: server
     if (e.pointerType === "mouse" && e.button !== 0) return;
     debug?.record(e);
     if (panelOpen && pointer.current === null) {
-      setPanelOpen(false);
+      closePanel();
       // A tap on the drawing while the panel is out just closes it, like tapping outside a menu.
       // (Upright the panel is the inline tool rows and always shown: draw as usual.)
-      if (typeof matchMedia !== "undefined" && matchMedia(SIDEWAYS_QUERY).matches) {
+      if (isSideways()) {
         e.preventDefault();
         return;
       }
@@ -184,11 +208,11 @@ export function DrawPad({ strokes, setStrokes, send, activity, fillsLeft: server
   const pickColor = (i: number) => {
     setColor(i);
     if (tool === "eraser") setTool("pen");
-    setPanelOpen(false);
+    closePanel();
   };
   const pickTool = (t: Tool) => {
     setTool(t);
-    setPanelOpen(false);
+    closePanel();
   };
   const undo = () => edit({ t: "undo" }, (s) => s.slice(0, -1));
 
@@ -218,7 +242,12 @@ export function DrawPad({ strokes, setStrokes, send, activity, fillsLeft: server
           aria-label="Colours and tools"
           aria-expanded={panelOpen}
           aria-controls={panelId}
-          onClick={() => setPanelOpen((o) => !o)}
+          ref={toggleRef}
+          onClick={(e) => {
+            // detail 0: activated by Enter/Space (or assistive tech), not a pointer.
+            if (!panelOpen) focusPanel.current = e.detail === 0;
+            setPanelOpen(!panelOpen);
+          }}
         >
           {panelOpen ? (
             <span aria-hidden>✕</span>
@@ -233,7 +262,7 @@ export function DrawPad({ strokes, setStrokes, send, activity, fillsLeft: server
         </button>
       </div>
       {/* Upright: the palette and tool rows under the canvas. Sideways: the pull-out panel. */}
-      <div className="dd-tools" id={panelId} data-open={panelOpen || undefined} data-testid="tools-panel">
+      <div className="dd-tools" id={panelId} ref={panelRef} data-open={panelOpen || undefined} data-testid="tools-panel">
         <div className="dd-palette" role="radiogroup" aria-label="Color">
           {PALETTE.map((c, i) => (
             <button
@@ -289,7 +318,7 @@ export function DrawPad({ strokes, setStrokes, send, activity, fillsLeft: server
             aria-label="Clear"
             onClick={() => {
               edit({ t: "clear" }, () => []);
-              setPanelOpen(false);
+              closePanel();
             }}
           >
             <span aria-hidden>🗑️</span>

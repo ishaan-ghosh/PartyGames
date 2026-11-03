@@ -217,6 +217,37 @@ for (const viewport of [{ width: 667, height: 375 }, { width: 844, height: 390 }
     await host.mouse.click(box.x + box.width * 0.1, box.y + box.height * 0.9);
     await expect(red).toBeHidden();
     expect(await inkedPixels(host, "draw-canvas")).toBe(before);
+
+    // Keyboard: the toggle opens the panel into its first control, and Escape hands focus back.
+    await toggle.focus();
+    await host.keyboard.press("Enter");
+    await expect(toggle).toHaveAttribute("aria-expanded", "true");
+    await expect(host.getByRole("radio", { name: "Black" })).toBeFocused();
+    await host.keyboard.press("Escape");
+    await expect(red).toBeHidden();
+    await expect(toggle).toBeFocused();
+    // Picking from the keyboard closes the panel without dropping focus to the page.
+    await host.keyboard.press("Enter");
+    await host.keyboard.press("Tab");
+    await host.keyboard.press("Enter");
+    await expect(red).toBeHidden();
+    await expect(toggle).toBeFocused();
+
+    // Escape in the Players dialog (opened from the panel's host bar) closes only the dialog.
+    await toggle.click();
+    await host.getByTestId("host-players").click();
+    const dialog = host.getByRole("dialog");
+    await expect(dialog).toBeVisible();
+    await host.keyboard.press("Escape");
+    await expect(dialog).toBeHidden();
+    await expect(toggle).toHaveAttribute("aria-expanded", "true");
+    await expect(host.getByTestId("host-players")).toBeVisible();
+    await expect(host.getByTestId("host-players")).toBeFocused();
+    // A second Escape closes the panel, and focus leaves the hidden host bar for the toggle.
+    await host.keyboard.press("Escape");
+    await expect(toggle).toHaveAttribute("aria-expanded", "false");
+    await expect(host.getByTestId("host-skip")).toBeHidden();
+    await expect(toggle).toBeFocused();
   });
 }
 

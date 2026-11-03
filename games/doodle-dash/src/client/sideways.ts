@@ -86,3 +86,34 @@ export function useSidewaysLayout(ref: RefObject<HTMLElement | null>, active: bo
     };
   }, [ref, active]);
 }
+
+/** Anything a modal dialog may be marked up as; Escape inside one belongs to the dialog. */
+export const MODAL_SELECTOR = "dialog,[role=dialog],[aria-modal=true]";
+
+/** The parts of a keydown event `escapeClosesPanel` looks at (a structural subset of KeyboardEvent). */
+export interface PanelKey {
+  key: string;
+  defaultPrevented: boolean;
+  target: unknown;
+}
+
+const inside = (target: unknown, selector: string): boolean =>
+  typeof (target as Element | null)?.closest === "function" && (target as Element).closest(selector) !== null;
+
+/**
+ * Whether a window keydown should close the pull-out panel: Escape, unless something already
+ * handled it or it was pressed inside a dialog (the host bar's Players dialog opens over the panel;
+ * Escape there closes only the dialog, and the host bar must stay up for focus to return to it).
+ */
+export function escapeClosesPanel(e: PanelKey): boolean {
+  return e.key === "Escape" && !e.defaultPrevented && !inside(e.target, MODAL_SELECTOR);
+}
+
+/**
+ * Whether focus sits in a part of the sideways layout that the closed panel hides: the panel
+ * itself, or the shell's host bar, which CSS shows only while the panel is open.
+ */
+export function focusInPanel(active: unknown, panel: { contains(node: Node | null): boolean } | null): boolean {
+  if (!active || !panel) return false;
+  return panel.contains(active as Node) || inside(active, ".host-bar");
+}

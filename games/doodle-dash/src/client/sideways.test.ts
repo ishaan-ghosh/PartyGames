@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { RAIL_MAX, RAIL_MIN, RAIL_SLIM, SIDE_GAP, WORD_ROW, sidewaysLayout } from "./sideways";
+import { RAIL_MAX, RAIL_MIN, RAIL_SLIM, SIDE_GAP, WORD_ROW, escapeClosesPanel, focusInPanel, sidewaysLayout } from "./sideways";
 
 /** The drawer's content box for a viewport: doodle.css pads it 6px left/right, 4px top/bottom. */
 const at = (vw: number, vh: number) => sidewaysLayout(vw - 12, vh - 8);
@@ -56,5 +56,46 @@ describe("sidewaysLayout", () => {
     const l = sidewaysLayout(40, 20);
     expect(l.canvasW).toBeGreaterThanOrEqual(0);
     expect(l.canvasH).toBeGreaterThanOrEqual(0);
+  });
+});
+
+/** A fake element whose `closest` matches when one of `matches` appears in the selector list. */
+const el = (...matches: string[]) => ({
+  closest: (sel: string) => (sel.split(",").some((s) => matches.includes(s.trim())) ? {} : null),
+});
+
+describe("escapeClosesPanel", () => {
+  it("closes on a plain Escape", () => {
+    expect(escapeClosesPanel({ key: "Escape", defaultPrevented: false, target: el() })).toBe(true);
+    expect(escapeClosesPanel({ key: "Escape", defaultPrevented: false, target: null })).toBe(true);
+    expect(escapeClosesPanel({ key: "Escape", defaultPrevented: false, target: {} })).toBe(true); // window/document
+  });
+
+  it("ignores other keys", () => {
+    expect(escapeClosesPanel({ key: "Enter", defaultPrevented: false, target: el() })).toBe(false);
+  });
+
+  it("leaves an Escape that something already handled", () => {
+    expect(escapeClosesPanel({ key: "Escape", defaultPrevented: true, target: el() })).toBe(false);
+  });
+
+  it("leaves an Escape pressed inside a dialog (e.g. the Players dialog over the panel)", () => {
+    for (const m of ["dialog", "[role=dialog]", "[aria-modal=true]"]) {
+      expect(escapeClosesPanel({ key: "Escape", defaultPrevented: false, target: el(m) }), m).toBe(false);
+    }
+  });
+});
+
+describe("focusInPanel", () => {
+  const button = el();
+  const panel = { contains: (n: unknown) => n === button };
+  it("is true for focus in the panel or the host bar it carries", () => {
+    expect(focusInPanel(button, panel)).toBe(true);
+    expect(focusInPanel(el(".host-bar"), panel)).toBe(true);
+  });
+  it("is false for focus elsewhere, nowhere, or with no panel", () => {
+    expect(focusInPanel(el(), panel)).toBe(false);
+    expect(focusInPanel(null, panel)).toBe(false);
+    expect(focusInPanel(button, null)).toBe(false);
   });
 });
