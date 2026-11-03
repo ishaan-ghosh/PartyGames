@@ -1,0 +1,33 @@
+:root {
+  color-scheme: dark;
+  --bg: #0f0e17;
+  --bg-raised: #1a1926;
+  --bg-raised-2: #24223a;
+  --bg-sunken: #0a0911;
+  --line: rgba(255, 255, 255, 0.09);
+  --text: #fffffe;
+  --text-dim: #a7a9be;
+  --accent: #ff8906;
+  --accent-deep: #b85d00;
+  --on-accent: #1a0d00;
+  --violet: #7f5af0;
+  --pink: #e53170;
+  --good: #2cb67d;
+  --warn: #ffd803;
+  --bad: #ef4565;
+  --focus: #ffd803;
+  --radius-sm: 10px;
+  --radius: 16px;
+  --radius-lg: 28px;
+  --shadow: 0 12px 40px rgba(0, 0, 0, 0.35);
+  --font-display: "Fredoka Variable", ui-rounded, system-ui, sans-serif;
+  --font-body: "Inter Variable", system-ui, sans-serif;
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --space-6: 40px;
+  --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+  --game-accent: var(--violet);
+}

@@ -1,0 +1,247 @@
+import { LIMITS, type ServerMsg } from "@party/shared";
+import { Server, type Connection, type WSMessage } from "partyserver";
+import type { Env } from "./env";
+import { DEFAULT_GAME_ID, games } from "./games";
+import { MessageLimiter, POLICY_CLOSE, RejectLog } from "./rate-limit";
+import { RoomCore, type SavedRoom } from "./room-core";
+import { ROOM_KEY, SavePlanner, getBatched, partKey } from "./save-plan";
+
+/** Durable Object storage takes at most 128 keys per get or put call. */
+const PUT_BATCH = 128;
+/** Largest client frame we will parse. A full 400-number stroke batch is about 8 KB of JSON. */
+export const MAX_FRAME_BYTES = 16 * 1024;
+
+/**
+ * How long state changed only by quiet actions (strokes) may stay unsaved. The pending timer also keeps
+ * the object from hibernating until the save has run, so a drawing is never left only in memory.
+ */
+export const QUIET_SAVE_MS = 2_000;
+
+/** Tag prefix for the per-socket id the room generates (see Room.getConnectionTags). */
+const SOCKET_TAG = "s:";
+
+/**
+ * The room's id for one socket. Not `conn.id`: that comes from the client's `_pk`, which PartySocket
+ * reuses across reconnects, so a half-open old socket and its replacement would share it.
+ */
+export function socketId(conn: Connection): string {
+  return conn.tags.find((t, i) => i > 0 && t.startsWith(SOCKET_TAG)) ?? conn.id;
+}
+
+function frameBytes(message: WSMessage): number {
+  // UTF-16 length undercounts UTF-8 bytes by at most 3×, so only measure exactly near the cap.
+  if (typeof message === "string") {
+    return message.length * 3 <= MAX_FRAME_BYTES ? message.length : new TextEncoder().encode(message).byteLength;
+  }
+  return message.byteLength;
+}
+
+/**
+ * Thin Durable Object adapter: transport, persistence and alarms. All behavior lives in RoomCore.
+ *
+ * Hibernates: an idle room is evicted from memory while its sockets stay open, and wakes (re-running
+ * onStart from storage) on the next message, close or alarm. What survives is storage plus each
+ * socket's tags; everything else here is rebuilt. See the spec's "Persistence and hibernation".
+ */
+export class Room extends Server<Env> {
+  static options = { hibernate: true };
+
+  private core!: RoomCore;
+  private scheduled: number | null = null;
+  private rejects?: RejectLog;
+  /** Per socket id. In memory only: see the spec for why losing them on hibernation is harmless. */
+  private readonly limiters = new Map<string, MessageLimiter>();
+  /** Pending save of quiet changes (QUIET_SAVE_MS). */
+  private quietSave: ReturnType<typeof setTimeout> | null = null;
+
+  private get rejectLog(): RejectLog {
+    return (this.rejects ??= new RejectLog(this.name));
+  }
+  private readonly planner = new SavePlanner();
+
+  async onStart() {
+    const saved = await this.ctx.storage.get<SavedRoom>(ROOM_KEY);
+    const names = saved?.parts ?? [];
+    const stored = await getBatched((keys) => this.ctx.storage.get(keys), names.map(partKey), PUT_BATCH);
+    this.planner.restored(names, saved?.partRevs);
+    // Sockets still open: after hibernation they outlive the object, and their members stay connected.
+    const live = new Set(Array.from(this.getConnections(), socketId));
+    this.core = this.makeCore(saved, Object.fromEntries(names.map((n) => [n, stored.get(partKey(n))])), live);
+    if (!saved) {
+      // Never created (or already discarded). Drop anything partyserver wrote on init (its `__ps_name`
+      // fallback record) so touching an unknown code leaves no storage behind. The name still comes
+      // from ctx.id.name.
+      await this.ctx.storage.deleteAll();
+      this.scheduled = null;
+      return;
+    }
+    this.scheduled = await this.ctx.storage.getAlarm();
+    // Restoring marks everyone whose socket is gone disconnected; persist that if it changed anything
+    // (a wake from hibernation with every socket still open writes nothing), and make sure an alarm
+    // exists, because a restart can drop sockets without onClose and nothing else would wake this room.
+    this.core.announceRestore(Date.now());
+    await this.after(this.core.restoreChanged);
+  }
+
+  /** Socket ids are random and server-made, so a client can't pick (or collide with) one. */
+  getConnectionTags(): string[] {
+    return [`${SOCKET_TAG}${crypto.randomUUID()}`];
+  }
+
+  private connection(sid: string): Connection | undefined {
+    for (const c of this.getConnections(sid)) if (socketId(c) === sid) return c;
+    return undefined;
+  }
+
+  private makeCore(saved?: SavedRoom, parts?: Record<string, unknown>, live?: ReadonlySet<string>): RoomCore {
+    return new RoomCore(
+      this.name,
+      {
+        newId: () => crypto.randomUUID(),
+        newSeed: () => crypto.getRandomValues(new Uint32Array(1))[0]!,
+        games,
+        defaultGameId: DEFAULT_GAME_ID,
+      },
+      {
+        send: (id, msg) => this.connection(id)?.send(JSON.stringify(msg)),
+        close: (id) => this.connection(id)?.close(4000, "closed by room"),
+        reject: (r) => this.rejectLog.log(r, Date.now()),
+      },
+      saved ? { saved, now: Date.now(), parts, live } : undefined,
+    );
+  }
+
+  /**
+   * RPC from the Worker's `POST /api/rooms`. Claims this room code with a fresh host key;
+   * returns false if the code is already taken. Not reachable from outside the Worker.
+   */
+  async create(hostKey: string): Promise<boolean> {
+    const ok = this.core.create(hostKey, Date.now());
+    if (ok) await this.after(true);
+    return ok;
+  }
+
+  onMessage(conn: Connection, message: WSMessage) {
+    const now = Date.now();
+    const sid = socketId(conn);
+    let limiter = this.limiters.get(sid);
+    if (!limiter) this.limiters.set(sid, (limiter = new MessageLimiter(now)));
+    const verdict = limiter.check(now);
+    if (verdict !== "ok") {
+      // Dropped silently: answering a flood would only amplify it.
+      this.rejectLog.log({ conn: sid, type: "?", reason: verdict === "close" ? "rate_abuse" : "rate_limited" }, now);
+      if (verdict === "close") {
+        try {
+          conn.close(POLICY_CLOSE, "too many messages");
+        } catch {
+          // Already closing: frames still in flight keep landing here until onClose.
+        }
+      }
+      return;
+    }
+    if (frameBytes(message) > MAX_FRAME_BYTES) {
+      this.rejectLog.log({ conn: sid, type: "?", reason: "too_large" }, now);
+      const err: ServerMsg = { type: "error", code: "BAD_MESSAGE", message: "Message too large." };
+      conn.send(JSON.stringify(err));
+      return;
+    }
+    let data: unknown = null;
+    if (typeof message === "string") {
+      try {
+        data = JSON.parse(message);
+      } catch {
+        data = null;
+      }
+    }
+    const r = this.core.message(sid, data, now);
+    if (r.dirty && !r.persist) this.saveSoon();
+    void this.after(r.persist);
+  }
+
+  // A socket's close can arrive after its _pk reconnected on a new socket: it carries the old socket
+  // id, which no member holds any more, so the new connection stays connected.
+  onClose(conn: Connection) {
+    this.gone(socketId(conn));
+  }
+
+  onError(conn: Connection) {
+    this.gone(socketId(conn));
+  }
+
+  private gone(sid: string) {
+    this.limiters.delete(sid);
+    void this.after(this.core.disconnect(sid, Date.now()).persist);
+  }
+
+  /** Saves quiet changes within QUIET_SAVE_MS. Any save before then (see save()) covers them too. */
+  private saveSoon() {
+    this.quietSave ??= setTimeout(() => {
+      this.quietSave = null;
+      void this.after(true);
+    }, QUIET_SAVE_MS);
+  }
+
+  /** Rooms speak WebSocket only; creation goes through the `create` RPC. */
+  onRequest(): Response {
+    return new Response("Not found", { status: 404 });
+  }
+
+  async onAlarm() {
+    const now = Date.now();
+    this.scheduled = null;
+    if (!this.core.created || this.core.shouldDiscard(now)) {
+      await this.discard();
+      return;
+    }
+    await this.after(this.core.tick(now).persist);
+  }
+
+  /** Forgets the room entirely: no saved state, no alarm, no partyserver bookkeeping. The code is free again. */
+  private async discard() {
+    this.cancelQuietSave();
+    await this.ctx.storage.deleteAlarm();
+    await this.ctx.storage.deleteAll();
+    this.planner.reset();
+    this.scheduled = null;
+    this.core = this.makeCore();
+  }
+
+  /**
+   * Writes the room record plus only the game parts that changed (see SavePlanner). All calls are
+   * issued without an await between them, so storage coalesces them into one atomic write and
+   * overlapping saves stay in order.
+   */
+  private save(): Promise<unknown> {
+    this.cancelQuietSave(); // this save includes every quiet change so far
+    const { put, del } = this.planner.plan(this.core.serializeSplit());
+    const entries = Object.entries(put);
+    const writes: Promise<unknown>[] = [];
+    for (let i = 0; i < entries.length; i += PUT_BATCH) {
+      writes.push(this.ctx.storage.put(Object.fromEntries(entries.slice(i, i + PUT_BATCH))));
+    }
+    for (let i = 0; i < del.length; i += PUT_BATCH) writes.push(this.ctx.storage.delete(del.slice(i, i + PUT_BATCH)));
+    return Promise.all(writes);
+  }
+
+  private cancelQuietSave() {
+    if (this.quietSave === null) return;
+    clearTimeout(this.quietSave);
+    this.quietSave = null;
+  }
+
+  /**
+   * Persists if asked, then keeps an alarm at or before the core's next timer. A created room always
+   * has one, capped at the empty-room TTL from now, as a watchdog: when it fires, the room is either
+   * discarded (still empty past its TTL) or ticked and re-armed.
+   */
+  private async after(persist: boolean) {
+    if (!this.core.created) return;
+    if (persist) await this.save();
+    const at = Math.min(this.core.nextAlarmAt() ?? Infinity, Date.now() + LIMITS.emptyRoomTtlMs);
+    // An earlier alarm than needed is harmless (it ticks and re-arms), so only move it earlier. This
+    // avoids an alarm write per message while the watchdog drifts forward.
+    if (this.scheduled !== null && this.scheduled <= at) return;
+    this.scheduled = at;
+    await this.ctx.storage.setAlarm(at);
+  }
+}
