@@ -8,7 +8,7 @@
   "scripts": {
     "dev": "pnpm --parallel --filter @party/web --filter @party/server dev",
     "build": "pnpm --filter @party/web build",
-    "typecheck": "pnpm -r --if-present typecheck",
+    "typecheck": "pnpm -r --if-present typecheck && tsc -p tsconfig.e2e.json",
     "test": "pnpm -r --if-present test",
     "e2e": "playwright test",
     "cf:deploy": "pnpm build && pnpm --filter @party/server cf:deploy"
@@ -16,6 +16,7 @@
   "packageManager": "pnpm@10.34.9",
   "devDependencies": {
     "@playwright/test": "^1.64.1",
+    "@types/node": "^26.6.6",
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
     "typescript": "^7.0.2",
