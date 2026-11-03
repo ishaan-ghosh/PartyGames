@@ -98,7 +98,12 @@ describe("room lifecycle", () => {
     ws.send(JSON.stringify({ type: "hello", role: "player", name: "Ana", hostKey }));
     await vi.waitFor(() => expect(messages.some((m) => m.type === "welcome")).toBe(true));
     expect((await storageOf(code)).alarm).not.toBeNull();
+    await vi.waitFor(() => expect(messages.some((m) => m.type === "room")).toBe(true));
+    const seen = messages.length;
     expect(await runDurableObjectAlarm(stubFor(code))).toBe(true);
+    // A watchdog alarm that changes nothing a client can see sends nothing.
+    await new Promise((r) => setTimeout(r, 100));
+    expect(messages.length).toBe(seen);
     const { keys, alarm } = await storageOf(code);
     expect(keys).toContain("room");
     expect(alarm).not.toBeNull();

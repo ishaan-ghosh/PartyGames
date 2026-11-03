@@ -82,6 +82,10 @@ function cleanAvatar(avatar: Avatar | undefined): Avatar {
   return { emoji: ok ? emoji : DEFAULT_AVATAR.emoji, color: avatar.color };
 }
 
+function viewerOf(m: Member): Viewer {
+  return m.kind === "screen" ? { kind: "screen" } : { kind: "player", playerId: m.id };
+}
+
 /** All room behavior, free of Cloudflare APIs. The Durable Object adapter feeds it messages and time. */
 export class RoomCore {
   private s: SavedRoom;
@@ -180,13 +184,18 @@ export class RoomCore {
     return YES;
   }
 
+  /**
+   * Alarm handler. Broadcasts only if something a client can see changed: clients run countdowns from
+   * deadlines and `now`, so a watchdog or early alarm that moves nothing sends nothing.
+   */
   tick(now: number): void {
+    const before = this.visible();
     if (this.s.hostGoneAt !== null && now >= this.s.hostGoneAt + LIMITS.hostGraceMs) this.transferHost();
     if (this.s.phase === "playing") {
       this.s.gameState = this.game.onTimer(this.s.gameState, now);
       this.checkOver();
     }
-    this.broadcast(now);
+    if (this.visible() !== before) this.broadcast(now);
   }
 
   nextAlarmAt(): number | null {
@@ -466,9 +475,17 @@ export class RoomCore {
     for (const c of this.connected()) {
       this.out.send(c.connId!, { type: "room", room, now });
       if (this.s.phase === "playing") {
-        const viewer: Viewer = c.kind === "screen" ? { kind: "screen" } : { kind: "player", playerId: c.id };
-        this.out.send(c.connId!, { type: "view", payload: this.game.view(this.s.gameState, viewer), now });
+        this.out.send(c.connId!, { type: "view", payload: this.game.view(this.s.gameState, viewerOf(c)), now });
       }
     }
+  }
+
+  /**
+   * What broadcast() would send, minus `now`, as one string. Serialized eagerly because game rules may
+   * mutate their state in place. Views go over the wire as JSON, so comparing JSON is exact.
+   */
+  private visible(): string {
+    const views = this.s.phase === "playing" ? this.connected().map((c) => this.game.view(this.s.gameState, viewerOf(c))) : null;
+    return JSON.stringify([this.snapshot(), views]);
   }
 }

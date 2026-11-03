@@ -680,3 +680,45 @@ describe("RoomCore: logging rejected messages", () => {
     expect(h.rejects).toEqual([]);
   });
 });
+
+describe("RoomCore: tick only broadcasts visible changes", () => {
+  it("sends nothing when an alarm fires and nothing changed (watchdog, early alarm)", () => {
+    const l = lobby();
+    const before = l.sent.length;
+    l.core.tick(5_000);
+    expect(l.sent.length).toBe(before);
+    const g = started();
+    const mid = g.sent.length;
+    g.core.tick(999); // game timer not due yet
+    expect(g.sent.length).toBe(mid);
+  });
+
+  it("broadcasts room and views to everyone when a game timer moves the game on", () => {
+    const h = started();
+    const before = h.sent.length;
+    h.core.tick(1000);
+    const fresh = h.sent.slice(before);
+    for (const c of ["s1", "c1", "c2"]) {
+      expect(fresh.some((x) => x.to === c && x.msg.type === "room")).toBe(true);
+      expect(fresh.some((x) => x.to === c && x.msg.type === "view")).toBe(true);
+    }
+    expect(h.last("c1", "view")!.payload).toMatchObject({ count: 1 });
+  });
+
+  it("broadcasts a host transfer", () => {
+    const h = lobby();
+    h.core.disconnect("s1", 1000);
+    const before = h.sent.length;
+    h.core.tick(16_000);
+    expect(h.sent.length).toBeGreaterThan(before);
+    expect(h.last("c1", "room")!.room.hostId).toBe(h.id("c1"));
+  });
+
+  it("broadcasts when a timer ends the game", () => {
+    const h = started();
+    h.core.message("c1", { type: "action", payload: { t: "inc" } }, 10);
+    h.core.message("c1", { type: "action", payload: { t: "inc" } }, 20);
+    h.core.tick(1000); // third count reaches the target of 3
+    expect(h.last("c1", "room")!.room).toMatchObject({ phase: "lobby", lastResults: expect.any(Array) });
+  });
+});
