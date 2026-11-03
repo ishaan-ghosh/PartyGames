@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { handleStroke } from "./strokes";
 import { drawing, start } from "./testkit";
-import { onSkip, onTimer } from "./turns";
-import { INK_LIMIT } from "./types";
+import { onChoose, onSkip, onTimer } from "./turns";
+import { INK_LIMIT, MAX_FILLS } from "./types";
 import { view } from "./view";
 
 describe("strokes", () => {
@@ -62,5 +62,64 @@ describe("strokes", () => {
     const v = view(s, { kind: "player", playerId: "late" });
     expect(v.strokes).toHaveLength(1);
     expect(v.opSeq).toBe(1);
+  });
+});
+
+describe("fill cap", () => {
+  const fill = { t: "fill", color: 4, x: 0.5, y: 0.5 } as const;
+
+  it("is 60 fills per turn", () => {
+    expect(MAX_FILLS).toBe(60);
+  });
+
+  it("rejects fills past the cap without an op or seq bump", () => {
+    const s = drawing("banana");
+    for (let i = 0; i < MAX_FILLS; i++) expect(handleStroke(s, "p1", fill).events).toBeDefined();
+    const seq = s.opSeq;
+    const ink = s.ink;
+    const r = handleStroke(s, "p1", fill);
+    expect(r.events).toBeUndefined();
+    expect(s.opSeq).toBe(seq);
+    expect(s.ink).toBe(ink);
+    expect(s.strokes).toHaveLength(MAX_FILLS);
+    // Pen strokes are still accepted.
+    expect(handleStroke(s, "p1", { t: "strokeBegin", tool: "pen", color: 0, size: 0, points: [0, 0] }).events).toBeDefined();
+  });
+
+  it("does not refund fills on undo or clear", () => {
+    const s = drawing("banana");
+    for (let i = 0; i < MAX_FILLS; i++) handleStroke(s, "p1", fill);
+    handleStroke(s, "p1", { t: "undo" });
+    expect(handleStroke(s, "p1", fill).events).toBeUndefined();
+    handleStroke(s, "p1", { t: "clear" });
+    expect(handleStroke(s, "p1", fill).events).toBeUndefined();
+  });
+
+  it("resets the count for the next turn", () => {
+    let s = drawing("banana");
+    for (let i = 0; i < MAX_FILLS; i++) handleStroke(s, "p1", fill);
+    s = onSkip(s, 1000);
+    s = onTimer(s, 6000);
+    expect(s.drawerId).toBe("p2");
+    onChoose(s, "p2", 0, 6000);
+    expect(view(s, { kind: "player", playerId: "p2" }).fillsLeft).toBe(MAX_FILLS);
+    expect(handleStroke(s, "p2", fill).events).toBeDefined();
+  });
+
+  it("shows the fills left only to the drawer while drawing", () => {
+    const s = drawing("banana");
+    handleStroke(s, "p1", fill);
+    handleStroke(s, "p1", fill);
+    expect(view(s, { kind: "player", playerId: "p1" }).fillsLeft).toBe(MAX_FILLS - 2);
+    expect(view(s, { kind: "player", playerId: "p2" }).fillsLeft).toBeUndefined();
+    expect(view(s, { kind: "screen" }).fillsLeft).toBeUndefined();
+    expect(view(start(3), { kind: "player", playerId: "p1" }).fillsLeft).toBeUndefined(); // choosing
+  });
+
+  it("treats a saved state without a fill count as no fills yet", () => {
+    const s = drawing("banana");
+    delete (s as Partial<typeof s>).fills;
+    expect(handleStroke(s, "p1", fill).events).toBeDefined();
+    expect(view(s, { kind: "player", playerId: "p1" }).fillsLeft).toBe(MAX_FILLS - 1);
   });
 });

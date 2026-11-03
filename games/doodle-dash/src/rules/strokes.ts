@@ -1,5 +1,5 @@
 import type { ActionResult } from "@party/shared";
-import { INK_LIMIT, STROKE_COST, type DoodleState, type Stroke, type StrokeAction, type StrokeOp } from "./types";
+import { INK_LIMIT, MAX_FILLS, STROKE_COST, type DoodleState, type Stroke, type StrokeAction, type StrokeOp } from "./types";
 
 /** Applies a drawer's stroke action. Always quiet; accepted actions carry one op event for the others. */
 export function handleStroke(s: DoodleState, playerId: string, action: StrokeAction): ActionResult<DoodleState> {
@@ -25,7 +25,9 @@ export function handleStroke(s: DoodleState, playerId: string, action: StrokeAct
       break;
     }
     case "fill": {
-      if (s.ink + 2 + STROKE_COST > INK_LIMIT) return ignore;
+      const fills = s.fills ?? 0;
+      if (fills >= MAX_FILLS || s.ink + 2 + STROKE_COST > INK_LIMIT) return ignore;
+      s.fills = fills + 1;
       s.ink += 2 + STROKE_COST;
       const stroke: Stroke = { id: s.nextStrokeId++, tool: "fill", color: action.color, x: action.x, y: action.y };
       s.strokes.push(stroke);

@@ -2,7 +2,7 @@ import { beforeAll, describe, expect, it } from "vitest";
 import { parseAction } from "./actions";
 import { handleStroke } from "./strokes";
 import { drawing } from "./testkit";
-import { INK_LIMIT, MAX_POINTS_PER_BATCH, STROKE_COST, type DoodleState, type StrokeAction } from "./types";
+import { INK_LIMIT, MAX_FILLS, MAX_POINTS_PER_BATCH, STROKE_COST, type DoodleState, type StrokeAction } from "./types";
 import { view } from "./view";
 
 // node:v8 is loaded dynamically because this package's tsconfig has no Node types.
@@ -105,8 +105,17 @@ describe("max-ink message and save size", () => {
     expectSmall(s);
   });
 
-  it("many fills", () => {
+  it("many fills stop at the fill cap", () => {
     const s = flood(() => ({ t: "fill", color: 3, x: rand(), y: rand() }));
+    expect(s.strokes).toHaveLength(MAX_FILLS);
+    expect(s.ink).toBe(MAX_FILLS * (2 + STROKE_COST));
+    expectSmall(s);
+  });
+
+  it("dots up to the fill cap, then dots to the ink limit", () => {
+    const s = drawing("banana");
+    for (let i = 0; i < MAX_FILLS; i++) handleStroke(s, "p1", { t: "fill", color: 3, x: rand(), y: rand() });
+    while (handleStroke(s, "p1", parseAction(begin([rand(), rand()])) as StrokeAction).events);
     expect(s.ink).toBeGreaterThan(INK_LIMIT - STROKE_COST - 2);
     expectSmall(s);
   });

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { MAX_POINTS_PER_BATCH, type Stroke } from "../rules";
-import { applyOp, chunkPoints, floodFillData, hexToRgb, normalizePoint, planRender } from "./strokes";
+import { MAX_FILLS, MAX_POINTS_PER_BATCH, type Stroke } from "../rules";
+import { applyOp, chunkPoints, fillBadge, fillsRemaining, floodFillData, hexToRgb, normalizePoint, planRender } from "./strokes";
 
 const pen = (id: number, points: number[]): Stroke => ({ id, tool: "pen", color: 0, size: 0, points });
 
@@ -133,5 +133,36 @@ describe("chunkPoints", () => {
 
   it("returns no batches for no points", () => {
     expect(chunkPoints([])).toEqual([]);
+  });
+});
+
+describe("fillsRemaining", () => {
+  it("defaults to the full cap before the server reports a count", () => {
+    expect(fillsRemaining(undefined, 0)).toBe(MAX_FILLS);
+  });
+
+  it("counts the pad's own fills, since stroke actions bring no new view", () => {
+    expect(fillsRemaining(MAX_FILLS, 3)).toBe(MAX_FILLS - 3);
+    expect(fillsRemaining(MAX_FILLS - 3, 3)).toBe(MAX_FILLS - 3); // a later view already counts them
+  });
+
+  it("trusts the server's lower count, e.g. after the pad remounted mid-turn", () => {
+    expect(fillsRemaining(10, 0)).toBe(10);
+    expect(fillsRemaining(10, 4)).toBe(10);
+  });
+
+  it("never goes below zero", () => {
+    expect(fillsRemaining(MAX_FILLS, MAX_FILLS + 2)).toBe(0);
+    expect(fillsRemaining(-1, 0)).toBe(0);
+    expect(fillsRemaining(0, 0)).toBe(0);
+  });
+});
+
+describe("fillBadge", () => {
+  it("shows the count only when few fills are left", () => {
+    expect(fillBadge(MAX_FILLS)).toBeNull();
+    expect(fillBadge(11)).toBeNull();
+    expect(fillBadge(10)).toBe("10");
+    expect(fillBadge(0)).toBe("0");
   });
 });

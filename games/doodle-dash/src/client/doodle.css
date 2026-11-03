@@ -122,3 +122,9 @@ html.dd-no-overscroll, html.dd-no-overscroll body { overscroll-behavior: none; }
   .dd-screen .dd-canvas-cell { container-type: normal; }
   .dd-screen .dd-canvas-wrap { width: 100%; }
 }
+
+/* ---- Fill tool: per-turn cap (MAX_FILLS) ---- */
+.dd-tool-counted { position: relative; }
+.dd-tool-badge { position: absolute; top: 2px; right: 2px; min-width: 20px; height: 20px; padding: 0 5px; border-radius: 999px; background: var(--warn); color: var(--bg); font: 700 0.75rem/20px var(--font-display); text-align: center; pointer-events: none; }
+.dd-tool:disabled { opacity: 0.45; cursor: not-allowed; }
+.dd-tool:disabled .dd-tool-badge { background: var(--bad); color: var(--text); }

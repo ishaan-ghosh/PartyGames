@@ -56,7 +56,7 @@ export function DoodlePhone(p: GameClientProps<DoodleView>) {
       <div className="phone dd-phone dd-phone-draw">
         {header}
         <p className="dd-secret">Draw: <strong data-testid="secret-word">{view.word}</strong></p>
-        <DrawPad strokes={strokes} setStrokes={setStrokes} send={send} activity={activity} />
+        <DrawPad strokes={strokes} setStrokes={setStrokes} send={send} activity={activity} fillsLeft={view.fillsLeft} />
       </div>
     );
   }

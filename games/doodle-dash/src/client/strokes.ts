@@ -1,4 +1,4 @@
-import { BRUSH_SIZES, MAX_POINTS_PER_BATCH, PALETTE, type Stroke, type StrokeOp } from "../rules";
+import { BRUSH_SIZES, MAX_FILLS, MAX_POINTS_PER_BATCH, PALETTE, type Stroke, type StrokeOp } from "../rules";
 
 export const CANVAS_W = 800;
 export const CANVAS_H = 600;
@@ -31,6 +31,20 @@ export function normalizePoint(
   rect: { left: number; top: number; width: number; height: number },
 ): [number, number] {
   return [clamp01((clientX - rect.left) / rect.width), clamp01((clientY - rect.top) / rect.height)];
+}
+
+/**
+ * Fills the drawer may still use this turn. Stroke actions are quiet (no new view), so the server's
+ * `fillsLeft` goes stale while drawing; the pad also counts the fills it sent this turn and the
+ * lower of the two wins. Fills the server refused anyway are resynced away by the idle shape check.
+ */
+export function fillsRemaining(serverLeft: number | undefined, sentThisTurn: number): number {
+  return Math.max(0, Math.min(serverLeft ?? MAX_FILLS, MAX_FILLS - sentThisTurn));
+}
+
+/** Badge text for the fill tool: the count once few fills are left, otherwise nothing. */
+export function fillBadge(left: number): string | null {
+  return left <= 10 ? String(left) : null;
 }
 
 /** Splits flat x,y points into batches the server accepts (≤ MAX_POINTS_PER_BATCH numbers, even length). */
