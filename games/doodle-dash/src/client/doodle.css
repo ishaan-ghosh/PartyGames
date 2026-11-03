@@ -7,7 +7,13 @@
 .dd-hint-big { font-size: clamp(2rem, 3.4vw, 3.2rem); }
 .dd-letter { min-width: 0.85em; text-align: center; border-bottom: 0.12em solid var(--game-accent); line-height: 1.25; }
 .dd-gap { width: 0.6em; }
-.dd-stage { display: grid; grid-template-columns: minmax(0, 1fr) minmax(280px, 26vw); gap: 2vw; min-height: 0; }
+/*
+ * The side column is 26vw, widened by up to 2vw only out of slack beside a height-limited canvas,
+ * so the canvas never shrinks for it. The slack estimate takes the header at its 88px minimum,
+ * plus an 8px rounding margin, which overestimates the canvas height: a taller header only leaves more slack unused.
+ * 88vh - 48px - space-3 - 88px (+8px) is the stage height; 90vw - 2vw is the stage width minus the gap.
+ */
+.dd-stage { display: grid; grid-template-columns: minmax(0, 1fr) minmax(280px, 26vw); grid-template-columns: minmax(0, 1fr) minmax(280px, max(26vw, min(28vw, 88vw - (88vh - 128px - var(--space-3)) * 4 / 3))); gap: 2vw; min-height: 0; }
 .dd-canvas-wrap { position: relative; width: 100%; border-radius: var(--radius-lg); overflow: hidden; box-shadow: var(--shadow); background: #fff; }
 /* The canvas takes the largest 4:3 box that fits whatever space its cell has: no vh arithmetic. */
 .dd-canvas-cell { min-height: 0; min-width: 0; display: grid; place-items: center; container-type: size; }
@@ -39,6 +45,24 @@
 .dd-feed-correct { color: var(--good); font-weight: 700; }
 .dd-feed-close { color: var(--warn); font-weight: 600; }
 .dd-feed-system { color: var(--text-dim); font-style: italic; }
+/*
+ * TV readability: the screen's feed and scoreboard are read from a couch ~3 m away, so their text
+ * scales with the viewport (mostly its height: 16:9 screens are height-limited). Roughly 28px feed
+ * text at 1080p and 20px at 720p; the vw term keeps narrower (4:3) screens from overflowing the
+ * side column. Phones (.dd-feed-compact) are untouched. Spacing is in em so it scales along.
+ * The static size before each clamp() is the fallback for older TV browsers without clamp/min.
+ */
+.dd-screen .dd-feed { gap: 0.35em; padding: 0.6em 0.75em; font-size: 1.375rem; font-size: clamp(1rem, min(0.25rem + 2.2vh, 0.4rem + 1.2vw), 2.25rem); }
+.dd-screen .dd-feed-item { line-height: 1.3; }
+.dd-screen .dd-score-row { font-size: 1.15rem; font-size: clamp(1.15rem, min(0.25rem + 1.9vh, 0.4rem + 1vw), 1.9rem); }
+.dd-screen .dd-score-num { font-size: 1.12em; }
+.dd-screen .dd-scores-many .dd-score-row { font-size: 0.95rem; font-size: clamp(0.95rem, min(0.2rem + 1.7vh, 0.3rem + 0.95vw), 1.6rem); }
+.dd-screen .dd-scores-many .dd-score-num { font-size: 1.1em; }
+/* Short screens (720p/768p): up to 8 single-column rows would squeeze the feed to ~3 lines, so tighten them. */
+@media (max-height: 820px) {
+  .dd-screen .dd-scores:not(.dd-scores-many) { gap: var(--space-1); }
+  .dd-screen .dd-scores:not(.dd-scores-many) .dd-score-row { padding-block: var(--space-1); }
+}
 
 /* ---- Waiting for players (game paused between turns) ---- */
 .dd-waiting { display: grid; justify-items: center; gap: var(--space-2); text-align: center; }
