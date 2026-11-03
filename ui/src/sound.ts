@@ -31,8 +31,16 @@ export function setMuted(next: boolean): void {
   }
 }
 
+/** Called whenever the AudioContext's state changes (see installAudioUnlock). */
+const stateWatchers = new Set<() => void>();
+
 function getContext(): { c: AudioContext; resumed: Promise<void> } {
-  ctx ??= new AudioContext();
+  if (!ctx) {
+    ctx = new AudioContext();
+    ctx.addEventListener?.("statechange", () => {
+      for (const w of stateWatchers) w();
+    });
+  }
   // Safari also has an "interrupted" state, so resume on anything that isn't running.
   const resumed = ctx.state !== "running" ? ctx.resume().catch(() => {}) : Promise.resolve();
   return { c: ctx, resumed };
@@ -60,23 +68,61 @@ export async function unlockAudio(): Promise<boolean> {
 /** Events that count as user activation on touch and desktop (touch `pointerdown` does not). */
 const UNLOCK_EVENTS = ["pointerup", "touchend", "click", "keydown"] as const;
 
+type EventTarget_ = Pick<Document, "addEventListener" | "removeEventListener">;
+
 /**
- * Try to unlock audio on every activation event until the context is running, then detach.
- * Returns a function that detaches early.
+ * Try to unlock audio on every activation event until the context is running, then stop listening for
+ * activation. iOS Safari suspends or interrupts the context again when the phone sleeps, the tab is
+ * backgrounded, or a call/Siri takes over, so the activation listeners re-arm (and resume() is tried at
+ * once) when the context leaves "running", the page becomes visible, or it's restored from the
+ * back/forward cache (`pageshow` on `win`). Nothing audible is played on unlock.
+ * Returns a function that removes every listener.
  */
-export function installAudioUnlock(target: Pick<Document, "addEventListener" | "removeEventListener">): () => void {
-  let done = false;
-  const detach = () => {
-    done = true;
-    for (const e of UNLOCK_EVENTS) target.removeEventListener(e, onEvent, true);
+export function installAudioUnlock(
+  target: EventTarget_ & { visibilityState?: DocumentVisibilityState },
+  win?: Pick<Window, "addEventListener" | "removeEventListener">,
+): () => void {
+  let disposed = false;
+  let armed = false;
+  const arm = () => {
+    if (armed || disposed) return;
+    armed = true;
+    for (const e of UNLOCK_EVENTS) target.addEventListener(e, onGesture, true);
   };
-  function onEvent() {
+  const disarm = () => {
+    if (!armed) return;
+    armed = false;
+    for (const e of UNLOCK_EVENTS) target.removeEventListener(e, onGesture, true);
+  };
+  function onGesture() {
     void unlockAudio().then((running) => {
-      if (running && !done) detach();
+      if (running) disarm();
     });
   }
-  for (const e of UNLOCK_EVENTS) target.addEventListener(e, onEvent, true);
-  return detach;
+  /** The context (if any) isn't running: listen for activation again and try resuming without one. */
+  const recheck = () => {
+    if (disposed || !ctx || ctx.state === "running") return;
+    arm();
+    void ctx.resume().catch(() => {});
+  };
+  const onState = () => {
+    if (ctx?.state === "running") disarm();
+    else recheck();
+  };
+  const onVisibility = () => {
+    if (target.visibilityState !== "hidden") recheck();
+  };
+  stateWatchers.add(onState);
+  target.addEventListener("visibilitychange", onVisibility);
+  win?.addEventListener("pageshow", recheck);
+  arm();
+  return () => {
+    disarm();
+    disposed = true;
+    stateWatchers.delete(onState);
+    target.removeEventListener("visibilitychange", onVisibility);
+    win?.removeEventListener("pageshow", recheck);
+  };
 }
 
 /** Tiny synthesized sound effects — no audio files to load. */

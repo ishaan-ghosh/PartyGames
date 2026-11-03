@@ -5,8 +5,9 @@ import "./base.css";
 import "./ui.css";
 import { installAudioUnlock } from "./sound";
 
-// iOS Safari only lets audio start from a user activation: keep trying until it runs.
-if (typeof document !== "undefined") installAudioUnlock(document);
+// iOS Safari only lets audio start from a user activation: keep trying until it runs, and again
+// whenever it gets suspended (sleep, background tab, call/Siri).
+if (typeof document !== "undefined") installAudioUnlock(document, window);
 
 export { Button, type ButtonProps } from "./Button";
 export { PlayerChip, type PlayerChipProps } from "./PlayerChip";
