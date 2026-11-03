@@ -118,6 +118,7 @@ export function ScreenLobby({ room, youId, isHost, online, sendHost }: {
               setRefocus({ id: focusAfterKick(kickable.map((k) => k.id), playerId) });
             }}
             onClose={() => setKickId(null)}
+            returnFocus={chipRefs.current.get(kickTarget.id)}
           />
         )}
         {isHost ? (

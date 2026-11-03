@@ -50,15 +50,17 @@ export function KickChipButton({ player, onClick, buttonRef, children }: {
 }
 
 /** Lobby: confirm kicking one player (opened by tapping their chip). */
-export function KickConfirmDialog({ player, online, onKick, onClose }: {
+export function KickConfirmDialog({ player, online, onKick, onClose, returnFocus }: {
   player: PublicPlayer;
   online: boolean;
   onKick(playerId: string): void;
   onClose(): void;
+  /** The chip that opened it: focus goes back there on close (see Modal). */
+  returnFocus?: HTMLElement | null;
 }) {
   const titleId = useId();
   return (
-    <Modal labelledBy={titleId} onClose={onClose} className="modal-confirm">
+    <Modal labelledBy={titleId} onClose={onClose} returnFocus={returnFocus} className="modal-confirm">
       <ConfirmBody
         player={player}
         titleId={titleId}
@@ -78,12 +80,14 @@ export function KickConfirmDialog({ player, online, onKick, onClose }: {
  * the same dialog. The list follows the room snapshot, so a kicked player drops out once the server
  * confirms.
  */
-export function PlayersDialog({ room, youId, online, onKick, onClose }: {
+export function PlayersDialog({ room, youId, online, onKick, onClose, returnFocus }: {
   room: RoomSnapshot;
   youId: string;
   online: boolean;
   onKick(playerId: string): void;
   onClose(): void;
+  /** The button that opened it: focus goes back there on close (see Modal). */
+  returnFocus?: HTMLElement | null;
 }) {
   const titleId = useId();
   const [targetId, setTargetId] = useState<string | null>(null);
@@ -99,7 +103,7 @@ export function PlayersDialog({ room, youId, online, onKick, onClose }: {
     };
     // Escape/Back (and the backdrop) step back to the list, like Cancel; they don't close the dialog.
     return (
-      <Modal labelledBy={titleId} onClose={back} focusKey={`confirm:${target.id}`} className="modal-confirm">
+      <Modal labelledBy={titleId} onClose={back} focusKey={`confirm:${target.id}`} returnFocus={returnFocus} className="modal-confirm">
         <ConfirmBody
           player={target}
           titleId={titleId}
@@ -116,7 +120,7 @@ export function PlayersDialog({ room, youId, online, onKick, onClose }: {
   }
 
   return (
-    <Modal labelledBy={titleId} onClose={onClose} focusKey={`list:${returnTo ?? ""}`} className="modal-players">
+    <Modal labelledBy={titleId} onClose={onClose} focusKey={`list:${returnTo ?? ""}`} returnFocus={returnFocus} className="modal-players">
       <div className="modal-head">
         <h2 id={titleId} className="modal-title">Players</h2>
         <Button variant="ghost" aria-label="Close" data-autofocus={returnTo ? undefined : true} onClick={onClose}>

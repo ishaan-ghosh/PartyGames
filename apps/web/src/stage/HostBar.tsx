@@ -1,5 +1,5 @@
 import type { RoomSnapshot } from "@party/shared";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { PlayersDialog } from "../kick/KickDialogs";
 
 /**
@@ -17,6 +17,7 @@ export function HostBar({ room, youId, onSkip, onEnd, onKick, disabled = false, 
   confirmSkip?: boolean;
 }) {
   const [showPlayers, setShowPlayers] = useState(false);
+  const playersButton = useRef<HTMLButtonElement>(null);
   return (
     <>
       <div className="host-bar" role="group" aria-label="Host controls">
@@ -43,6 +44,7 @@ export function HostBar({ room, youId, onSkip, onEnd, onKick, disabled = false, 
         <button
           type="button"
           data-testid="host-players"
+          ref={playersButton}
           aria-haspopup="dialog"
           aria-label="Players"
           title="Players"
@@ -60,6 +62,7 @@ export function HostBar({ room, youId, onSkip, onEnd, onKick, disabled = false, 
           online={!disabled}
           onKick={onKick}
           onClose={() => setShowPlayers(false)}
+          returnFocus={playersButton.current}
         />
       )}
     </>

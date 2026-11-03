@@ -57,4 +57,4 @@ export type { DoodleAction, DoodleSettings, DoodleState, Stroke, StrokeOp } from
 export type { DoodleView, ViewFeedItem } from "./view";
 export type { PublicDoodleSettings } from "./settings";
 export { EMPTY_SIG, strokeSignature } from "./strokes";
-export { BRUSH_SIZES, CHOOSE_MS, MAX_FILLS, MAX_POINTS_PER_BATCH, PALETTE, REVEAL_MS } from "./types";
+export { BRUSH_SIZES, CANVAS_H, CANVAS_W, CHOOSE_MS, MAX_FILLS, MAX_POINTS_PER_BATCH, PALETTE, REVEAL_MS } from "./types";

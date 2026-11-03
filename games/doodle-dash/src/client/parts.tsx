@@ -59,7 +59,8 @@ function measureItems(el: HTMLElement, list: HTMLElement): ItemBox[] {
  * while the reader is at the bottom. Once they scroll up, their place is kept (by hand: iOS Safari
  * has no scroll anchoring, and the view trims the oldest item as each new one arrives) and a "New
  * messages" pill offers a jump back. The viewer's own new items (`youId`) always bring them down.
- * `alwaysFollow` (the TV, which nobody scrolls) always follows.
+ * `alwaysFollow` (the TV, which nobody scrolls) always follows, as does a feed CSS makes unscrollable
+ * (`overflow-y: hidden`, e.g. the sideways drawer's one-line strip): nobody can scroll that back.
  */
 export function Feed({ items, players, compact = false, alwaysFollow = false, youId = null }: {
   items: ViewFeedItem[];
@@ -79,6 +80,8 @@ export function Feed({ items, players, compact = false, alwaysFollow = false, yo
   const fixUpTop = useRef<number | null>(null);
   const lastSeenId = useRef<number | null>(null);
   const [unseen, setUnseen] = useState(false);
+
+  const pinned = (el: HTMLElement | null) => alwaysFollow || (!!el && getComputedStyle(el).overflowY === "hidden");
 
   const toBottom = useCallback(() => {
     const el = ref.current;
@@ -113,7 +116,7 @@ export function Feed({ items, players, compact = false, alwaysFollow = false, yo
     const own = hasOwnNewItem(lastSeenId.current, items, youId);
     lastSeenId.current = items.length ? items[items.length - 1]!.id : null;
     const fits = !!el && el.scrollHeight <= el.clientHeight;
-    if (alwaysFollow || atBottom.current || own || fits) toBottom();
+    if (pinned(el) || atBottom.current || own || fits) toBottom();
     else {
       holdPlace();
       if (fresh) setUnseen(true);
@@ -124,8 +127,10 @@ export function Feed({ items, players, compact = false, alwaysFollow = false, yo
   useEffect(() => {
     const el = ref.current;
     if (!el || typeof ResizeObserver === "undefined") return;
+    // Also when the layout just made the feed unscrollable (rotated into the one-line strip), even
+    // if the reader had scrolled up before.
     const ro = new ResizeObserver(() => {
-      if (alwaysFollow || atBottom.current) toBottom();
+      if (pinned(el) || atBottom.current) toBottom();
       else holdPlace();
     });
     ro.observe(el);

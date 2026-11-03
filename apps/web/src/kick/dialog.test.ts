@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { closeDialog, closeKeyAction, inertOutside, isCloseKey, isTextField, lockScroll, openModalDialog, trapTab } from "./dialog";
+import { closeDialog, closeKeyAction, inertOutside, isCloseKey, isTextField, lockScroll, openModalDialog, returnFocusTarget, trapTab } from "./dialog";
 
 type FakeDialog = { open?: boolean; attrs: Record<string, string>; showModal?: () => void; close?: () => void;
   hasAttribute(n: string): boolean; setAttribute(n: string, v: string): void; removeAttribute(n: string): void };
@@ -208,3 +208,22 @@ describe("lockScroll", () => {
   });
 });
 
+
+describe("returnFocusTarget", () => {
+  const el = (name: string, isConnected = true) => ({ name, isConnected, focus() {} });
+  it("prefers the trigger the caller named (a clicked button Safari never focused)", () => {
+    const chip = el("chip");
+    expect(returnFocusTarget(chip, el("body"))).toBe(chip);
+  });
+  it("falls back to what had focus at open when no trigger is given", () => {
+    const prev = el("prev");
+    expect(returnFocusTarget(null, prev)).toBe(prev);
+    expect(returnFocusTarget(undefined, prev)).toBe(prev);
+  });
+  it("skips a trigger that has left the page (e.g. the kicked player's chip)", () => {
+    const prev = el("prev");
+    expect(returnFocusTarget(el("chip", false), prev)).toBe(prev);
+    expect(returnFocusTarget(el("chip", false), el("prev", false))).toBeNull();
+    expect(returnFocusTarget(null, null)).toBeNull();
+  });
+});

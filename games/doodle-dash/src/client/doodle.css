@@ -1,3 +1,9 @@
+/*
+ * The drawing's shape (widescreen 16:9 on every device) comes from CANVAS_W / CANVAS_H in
+ * rules/types.ts: the screen and phone views set --dd-aspect (for aspect-ratio) and --dd-ar
+ * (width / height, for calc()) on their root element (canvasVars in CanvasView.tsx). No ratio here.
+ */
+
 /* ---- Screen (TV / laptop): everything important stays inside a 5% edge margin ---- */
 /* The bottom padding also reserves the band where the shell's fixed host bar and mute toggle sit (48px, at 5vh). */
 .dd-screen { height: 100vh; height: 100dvh; overflow: hidden; display: grid; grid-template-rows: auto minmax(0, 1fr); gap: 2vh; padding: 5vh 5vw calc(5vh + 48px + var(--space-3)); }
@@ -8,18 +14,20 @@
 .dd-letter { min-width: 0.85em; text-align: center; border-bottom: 0.12em solid var(--game-accent); line-height: 1.25; }
 .dd-gap { width: 0.6em; }
 /*
- * The side column is 26vw, widened by up to 2vw only out of slack beside a height-limited canvas,
- * so the canvas never shrinks for it. The slack estimate takes the header at its 88px minimum,
- * plus an 8px rounding margin, which overestimates the canvas height: a taller header only leaves more slack unused.
- * 88vh - 48px - space-3 - 88px (+8px) is the stage height; 90vw - 2vw is the stage width minus the gap.
+ * The side column (scoreboard + feed) is 23vw: on a 16:9 TV a 16:9 canvas is width-bound, so every
+ * vw the column gives up goes to the canvas (at 1080p ~1257×707, vs the old 4:3 canvas's 1069×802).
+ * Screens with height to spare beside a height-bound canvas (21:9, short windows) widen the column
+ * into that slack instead. The slack estimate takes the stage height at its largest (header at its
+ * 88px minimum: 100vh - 10vh - 48px - space-3 - 88px - 2vh, plus an 8px rounding margin) and the
+ * stage width minus the 1.5vw gap (88.5vw).
  */
-.dd-stage { display: grid; grid-template-columns: minmax(0, 1fr) minmax(280px, 26vw); grid-template-columns: minmax(0, 1fr) minmax(280px, max(26vw, min(28vw, 88vw - (88vh - 128px - var(--space-3)) * 4 / 3))); gap: 2vw; min-height: 0; }
+.dd-stage { display: grid; grid-template-columns: minmax(0, 1fr) minmax(280px, 23vw); grid-template-columns: minmax(0, 1fr) minmax(280px, max(23vw, 88.5vw - (88vh - 140px) * var(--dd-ar))); gap: 1.5vw; min-height: 0; }
 .dd-canvas-wrap { position: relative; width: 100%; border-radius: var(--radius-lg); overflow: hidden; box-shadow: var(--shadow); background: #fff; }
-/* The canvas takes the largest 4:3 box that fits whatever space its cell has: no vh arithmetic. */
-.dd-canvas-cell { min-height: 0; min-width: 0; display: grid; place-items: center; container-type: size; }
+/* The canvas takes the largest 16:9 box that fits whatever space its cell has: no vh arithmetic. */
+.dd-canvas-cell { position: relative; min-height: 0; min-width: 0; display: grid; place-items: center; container-type: size; }
 /* vh fallback first for browsers without container query units (iOS < 16, older TV browsers). */
-.dd-screen .dd-canvas-wrap { width: min(100%, (88vh - 160px) * 4 / 3); width: min(100cqw, 100cqh * 4 / 3); aspect-ratio: 4 / 3; }
-.dd-canvas { display: block; width: 100%; height: auto; aspect-ratio: 4 / 3; background: #fff; -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
+.dd-screen .dd-canvas-wrap { width: min(100%, (88vh - 160px) * var(--dd-ar)); width: min(100cqw, 100cqh * var(--dd-ar)); aspect-ratio: var(--dd-aspect); }
+.dd-canvas { display: block; width: 100%; height: auto; aspect-ratio: var(--dd-aspect); background: #fff; -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
 .dd-canvas-draw { touch-action: none; border-radius: var(--radius); box-shadow: var(--shadow); cursor: crosshair; }
 .dd-overlay { position: absolute; inset: 0; display: grid; place-content: center; justify-items: center; gap: var(--space-3); padding: var(--space-4); text-align: center; background: rgba(15, 14, 23, 0.84); color: var(--text); font: 600 1.5rem var(--font-display); animation: dd-fade 0.3s ease-out; }
 .dd-overlay p { margin: 0; }
@@ -114,7 +122,17 @@
   overscroll-behavior: none;
 }
 .dd-phone-draw .dd-pad { min-height: 0; grid-template-rows: minmax(0, 1fr) auto auto; gap: var(--space-2); }
-.dd-phone-draw .dd-canvas-draw { max-width: 100%; max-height: 100%; width: min(100%, (100vh - 260px) * 4 / 3); width: min(100cqw, 100cqh * 4 / 3); height: auto; }
+/*
+ * Upright the 16:9 canvas is width-bound on every phone, so its row stops at the column width's
+ * 16:9 height and the canvas and tools stay together right under the word (or feed), instead of
+ * the canvas floating in a tall cell; any height left over ends up below the tools, by the host bar.
+ * (Sideways the pad is display: contents and this is moot.)
+ */
+.dd-phone-draw .dd-pad { grid-template-rows: minmax(0, calc((min(100vw, 560px) - 32px) / var(--dd-ar))) auto auto; align-content: start; }
+.dd-phone-draw .dd-canvas-draw { max-width: 100%; max-height: 100%; width: min(100%, (100vh - 260px) * var(--dd-ar)); width: min(100cqw, 100cqh * var(--dd-ar)); height: auto; }
+/* Upright, the tools are plain rows under the canvas; the rail and pull-out panel are sideways only. */
+.dd-tools { display: contents; }
+.dd-rail-btns { display: none; }
 html.dd-no-overscroll, html.dd-no-overscroll body { overscroll-behavior: none; }
 .dd-secret { margin: 0; text-align: center; font: 600 1.15rem var(--font-display); }
 .dd-secret strong { color: var(--warn); font-size: 1.6rem; }
@@ -200,18 +218,38 @@ html.dd-no-overscroll, html.dd-no-overscroll body { overscroll-behavior: none; }
  * ---- Drawer's guess feed (phones-only mode: there is no TV to watch guesses on) ----
  * Portrait: a strip between the word and the canvas, fixed in height so the canvas never resizes
  * mid-turn. It takes the height the canvas can't use anyway (the canvas is width-bound on most
- * phones), but never less than ~2 lines, which on short phones costs the canvas a little height.
+ * phones), up to 8.5rem (a few lines: more would be a tall, mostly empty box over a short canvas),
+ * but never less than ~2 lines, which on short phones costs the canvas a little height.
  * --dd-fixed is everything else in the column (header, word, tools, gaps, padding).
+ * Height still left on tall phones goes to the tool rows (--dd-grow, up to 16px each, three rows):
+ * bigger targets rather than an empty band.
  */
-.dd-phone.dd-phone-draw-feed { grid-template-rows: auto auto auto minmax(0, 1fr); --dd-fixed: 296px; }
+.dd-phone.dd-phone-draw-feed {
+  grid-template-rows: auto auto auto minmax(0, 1fr);
+  --dd-fixed: 296px;
+  --dd-grow: clamp(0px, (100vh - var(--stage-chrome-bottom, 0px) - var(--dd-fixed) - (min(100vw, 560px) - 32px) / var(--dd-ar) - 8.5rem) / 3, 16px);
+  --dd-grow: clamp(0px, (100dvh - var(--stage-chrome-bottom, 0px) - var(--dd-fixed) - (min(100vw, 560px) - 32px) / var(--dd-ar) - 8.5rem) / 3, 16px);
+}
+.dd-phone-draw .dd-swatch { height: calc(48px + var(--dd-grow, 0px)); }
+.dd-phone-draw .dd-toolrow .dd-tool, .dd-phone-draw .dd-toolrow .dd-size { min-height: calc(48px + var(--dd-grow, 0px)); }
+/*
+ * With a TV (no feed) the drawer has far more height than a width-bound 16:9 canvas and the tools
+ * use: the tool rows grow the same way (292px: header, word, tools at 48px, gaps, padding), and
+ * the canvas and tools sit centred in the rest instead of leaving the lower half of the screen empty.
+ */
+.dd-phone.dd-phone-draw:not(.dd-phone-draw-feed) {
+  --dd-grow: clamp(0px, (100vh - var(--stage-chrome-bottom, 0px) - 292px - (min(100vw, 560px) - 32px) / var(--dd-ar)) / 3, 16px);
+  --dd-grow: clamp(0px, (100dvh - var(--stage-chrome-bottom, 0px) - 292px - (min(100vw, 560px) - 32px) / var(--dd-ar)) / 3, 16px);
+}
+.dd-phone-draw:not(.dd-phone-draw-feed) .dd-pad { align-content: center; }
 .dd-phone-draw .dd-feed {
   min-height: 0;
   max-height: none;
   gap: 2px;
   padding: 6px 10px;
   font-size: 0.9rem;
-  height: clamp(3.3rem, 100vh - var(--stage-chrome-bottom, 0px) - var(--dd-fixed) - (min(100vw, 560px) - 32px) * 0.75, 8.5rem);
-  height: clamp(3.3rem, 100dvh - var(--stage-chrome-bottom, 0px) - var(--dd-fixed) - (min(100vw, 560px) - 32px) * 0.75, 8.5rem);
+  height: clamp(3.3rem, 100vh - var(--stage-chrome-bottom, 0px) - var(--dd-fixed) - (min(100vw, 560px) - 32px) / var(--dd-ar), 8.5rem);
+  height: clamp(3.3rem, 100dvh - var(--stage-chrome-bottom, 0px) - var(--dd-fixed) - (min(100vw, 560px) - 32px) / var(--dd-ar), 8.5rem);
 }
 .dd-phone-draw .dd-feed-item { line-height: 1.3; }
 /* Short portrait phones: round, score and word share the timer's row, giving the feed its height. */
@@ -236,51 +274,153 @@ html.dd-no-overscroll, html.dd-no-overscroll body { overscroll-behavior: none; }
 
 /*
  * ---- Sideways phone (short landscape screens; tablets and laptops are taller than 500px) ----
- * Drawer: the canvas fills the full height on the left; a column on the right holds the word,
- * colours, tools, the feed (phones-only) and, at the foot beside the mute toggle, round/score/timer.
+ * Drawer: the 16:9 canvas gets as much of the screen as it can; a rail on the right holds the rest,
+ * and the full palette and tools pull out as a panel from the rail's edge. sideways.ts measures the
+ * drawer and picks one of two arrangements (whichever leaves the bigger canvas):
+ *   data-side="rail" (long phones, 844×390): canvas full height; the rail, --dd-rail wide (≥140px),
+ *     holds the word, round/score/timer, the panel toggle and undo, and (phones-only) the feed.
+ *   data-side="top" (16:9 phones, 667×375): the word, and in phones-only mode the newest guess,
+ *     in a 28px strip above the canvas; the rail is one 48px button wide.
+ * The rail's foot is left to the shell's mute toggle (bottom-right). The host bar (bottom-left,
+ * over the canvas) is hidden while the panel is shut and sits in the panel's foot when it's open.
  * One viewport tall and pulled down over the shell's 72px bottom band (negative margin), so the band
- * doesn't cost the canvas height and the page still never scrolls; when the host bar (bottom-left)
- * is shown, the canvas cell keeps clear of it instead.
- * Not position: fixed: iOS Safari can paint a fixed layer away from where it hit-tests touches
- * (e.g. once the guess keyboard or a toolbar change has left the page scrolled): strokes landed a
- * constant distance below the finger. In normal flow, like the portrait drawer, paint and touches agree.
+ * doesn't cost the canvas height and the page still never scrolls.
+ * Not position: fixed, and no transforms, on the canvas or any ancestor: iOS Safari can paint a fixed
+ * layer away from where it hit-tests touches (e.g. once the guess keyboard or a toolbar change has
+ * left the page scrolled): strokes landed a constant distance below the finger. In normal flow, like
+ * the portrait drawer, paint and touches agree. The panel is position: absolute, but it is a sibling
+ * of the canvas cell, never its ancestor.
  * The TV screen view (.dd-screen) is a different component and never matches these selectors.
  */
 @media (orientation: landscape) and (max-height: 500px) {
   .dd-phone.dd-phone-draw {
+    position: relative;
     height: 100vh;
     height: 100dvh;
     max-width: none;
     margin: 0 0 calc(-1 * var(--stage-chrome-bottom, 0px));
-    padding: max(6px, env(safe-area-inset-top)) max(8px, env(safe-area-inset-right)) max(6px, env(safe-area-inset-bottom)) max(8px, env(safe-area-inset-left));
-    grid-template-columns: minmax(0, 1fr) clamp(240px, 38vw, 300px);
-    grid-template-rows: auto auto auto minmax(0, 1fr) auto;
-    grid-template-areas: "canvas word" "canvas palette" "canvas tools" "canvas feed" "canvas head";
-    column-gap: 10px;
-    row-gap: 6px;
+    padding: max(4px, env(safe-area-inset-top)) max(6px, env(safe-area-inset-right)) max(4px, env(safe-area-inset-bottom)) max(6px, env(safe-area-inset-left));
+    grid-template-columns: minmax(0, 1fr) var(--dd-rail, 140px);
+    grid-template-rows: 28px auto auto minmax(0, 1fr) 52px;
+    grid-template-areas: "canvas word" "canvas head" "canvas btns" "canvas feed" "canvas mute";
+    column-gap: 6px; /* sideways.ts SIDE_GAP */
+    row-gap: 4px;
   }
   .dd-phone-draw .dd-pad { display: contents; }
-  .dd-phone-draw .dd-canvas-cell { grid-area: canvas; }
-  .dd-phone-draw:has(~ .host-bar) .dd-canvas-cell { padding-bottom: 60px; }
-  .dd-phone-draw .dd-canvas-draw { width: min(100%, (100vh - 12px) * 4 / 3); width: min(100cqw, 100cqh * 4 / 3); }
-  .dd-phone-draw .dd-secret { grid-area: word; font-size: 1rem; height: 1.6rem; line-height: 1.6rem; }
+  .dd-phone-draw .dd-canvas-cell { grid-area: canvas; place-items: center start; }
+  .dd-phone-draw .dd-canvas-draw { width: min(100%, (100vh - 8px) * var(--dd-ar)); width: min(100cqw, 100cqh * var(--dd-ar)); }
+  .dd-phone-draw .dd-secret { grid-area: word; font-size: 1rem; height: 28px; line-height: 28px; text-align: left; }
   .dd-phone-draw .dd-secret strong { font-size: calc(1.3rem * var(--dd-word-scale, 1)); }
-  .dd-phone-draw .dd-palette { grid-area: palette; display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 4px; overflow: visible; touch-action: manipulation; }
-  .dd-phone-draw .dd-swatch { width: auto; min-width: 0; height: 44px; }
-  .dd-phone-draw .dd-toolrow { grid-area: tools; grid-auto-flow: row; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 4px; overflow: visible; }
-  .dd-phone-draw .dd-toolrow .dd-tool, .dd-phone-draw .dd-toolrow .dd-size { min-width: 0; min-height: 44px; }
+  .dd-phone-draw .dd-phone-top { grid-area: head; gap: 4px; }
+  .dd-phone-draw .dd-round, .dd-phone-draw .dd-myscore { font-size: 0.95rem; }
+  .dd-phone-draw .dd-rail-btns { grid-area: btns; display: flex; gap: 6px; }
+  .dd-rail-btns .dd-tool { flex: 1 1 48px; min-width: 48px; min-height: 48px; }
+  .dd-toggle-swatch { display: grid; place-items: center; width: 34px; height: 34px; border-radius: 50%; border: 2px solid var(--line); font-size: 1.05rem; }
   .dd-phone-draw .dd-feed { grid-area: feed; height: auto; }
-  /* Leaves the bottom-right corner to the shell's mute toggle. */
-  .dd-phone-draw .dd-phone-top { grid-area: head; padding-right: 60px; }
+
+  /* The pull-out panel: just left of the rail, over the canvas's right edge (so it closes after a pick). */
+  .dd-phone-draw .dd-tools { display: none; }
+  .dd-phone-draw .dd-tools[data-open] {
+    position: absolute;
+    z-index: 30;
+    top: 0;
+    bottom: 0;
+    right: calc(max(6px, env(safe-area-inset-right)) + var(--dd-rail, 140px) + 6px);
+    width: min(320px, calc(100% - var(--dd-rail, 140px) - 24px));
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding: max(8px, env(safe-area-inset-top)) 10px max(8px, env(safe-area-inset-bottom));
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    background: var(--bg-raised);
+    border-left: 1px solid var(--line);
+    border-right: 1px solid var(--line);
+    box-shadow: var(--shadow);
+    animation: dd-slide 0.16s ease-out;
+  }
+  .dd-phone-draw .dd-palette { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 4px; margin: 0; padding: 0; overflow: visible; touch-action: manipulation; }
+  .dd-phone-draw .dd-swatch { width: auto; min-width: 0; height: 44px; }
+  .dd-phone-draw .dd-toolrow { grid-auto-flow: row; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 4px; margin: 0; padding: 0; overflow: visible; }
+  .dd-phone-draw .dd-toolrow .dd-tool, .dd-phone-draw .dd-toolrow .dd-size { min-width: 0; min-height: 44px; }
+  /* Host controls: out of the way (they'd cover the canvas) until the panel opens, then in its foot. */
+  .dd-phone-draw:has(~ .host-bar) .dd-tools[data-open] { padding-bottom: calc(48px + 16px + max(8px, env(safe-area-inset-bottom))); }
+  .dd-phone-draw:has(.dd-tools:not([data-open])) ~ .host-bar { display: none; }
+  .dd-phone-draw:has(.dd-tools[data-open]) ~ .host-bar {
+    left: auto;
+    right: calc(max(6px, env(safe-area-inset-right)) + var(--dd-rail, 140px) + 6px + 10px);
+    bottom: max(8px, env(safe-area-inset-bottom));
+    opacity: 1;
+  }
+  .dd-phone-draw:has(.dd-tools[data-open]) ~ .host-bar button { padding: 0 12px; }
+  .dd-phone-draw:has(.dd-tools[data-open]) ~ .host-bar .host-bar-label { position: absolute; width: 1px; height: 1px; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+
+  /* "top": word strip over the canvas, one-button rail. */
+  .dd-phone.dd-phone-draw[data-side="top"] {
+    grid-template-columns: minmax(0, 1fr) var(--dd-rail, 60px);
+    grid-template-rows: 28px auto minmax(0, 1fr) 52px;
+    grid-template-areas: "word btns" "canvas btns" "canvas head" "canvas mute";
+  }
+  .dd-phone.dd-phone-draw-feed[data-side="top"] {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) var(--dd-rail, 60px);
+    grid-template-areas: "word feed btns" "canvas canvas btns" "canvas canvas head" "canvas canvas mute";
+  }
+  .dd-phone-draw[data-side="top"] .dd-canvas-cell { place-items: start center; }
+  .dd-phone-draw[data-side="top"] .dd-canvas-draw { width: min(100%, (100vh - 40px) * var(--dd-ar)); width: min(100cqw, 100cqh * var(--dd-ar)); }
+  .dd-phone-draw[data-side="top"] .dd-rail-btns { flex-direction: column; }
+  .dd-phone-draw[data-side="top"] .dd-phone-top { flex-direction: column; justify-content: flex-end; align-items: center; gap: 2px; }
+  .dd-phone-draw[data-side="top"] .dd-round, .dd-phone-draw[data-side="top"] .dd-myscore { font-size: 0.8rem; }
+  /* The newest guess on one line; older ones scroll (the feed keeps itself scrolled to the newest). */
+  .dd-phone-draw[data-side="top"] .dd-feed { height: 28px; padding: 0 10px; gap: 0; font-size: 0.85rem; }
+  .dd-phone-draw[data-side="top"] .dd-feed-item { flex: none; line-height: 28px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  /* One line: nothing to scroll back through, and the "New messages" pill would cover the line.
+   * Unscrollable, the feed (parts.tsx) keeps its newest item in view, also right after a rotation
+   * from the "rail" layout where the drawer may have scrolled up. */
+  .dd-phone-draw[data-side="top"] .dd-feed { overflow: hidden; }
+  .dd-phone-draw[data-side="top"] .dd-feed-jump { display: none; }
+
+  /*
+   * Guesser watching the canvas (phones-only): canvas on the left, as tall as the screen above the
+   * shell's bottom band allows; header, hint, feed and guess box in a column on the right. One
+   * viewport tall, like the drawer, so the guess box never floats over the drawing.
+   */
+  .dd-phone.dd-phone-watch {
+    height: calc(100vh - var(--stage-chrome-bottom, 0px));
+    height: calc(100dvh - var(--stage-chrome-bottom, 0px));
+    max-width: none;
+    overflow: hidden;
+    padding: max(4px, env(safe-area-inset-top)) max(8px, env(safe-area-inset-right)) 4px max(8px, env(safe-area-inset-left));
+    grid-template-columns: minmax(0, 1fr) clamp(200px, 34vw, 320px);
+    grid-template-rows: auto auto auto minmax(0, 1fr) auto;
+    align-content: stretch;
+    gap: 6px 10px;
+  }
+  .dd-phone-watch > * { grid-column: 2; min-width: 0; }
+  .dd-phone-watch > .dd-phone-top { grid-row: 1; }
+  .dd-phone-watch > .dd-waiting, .dd-phone-watch > .dd-note, .dd-phone-watch > .dd-hint { grid-row: 2; }
+  .dd-phone-watch > .dd-solved { grid-row: 3; padding: var(--space-2); }
+  .dd-phone-watch > .dd-feed { grid-row: 4; max-height: none; min-height: 0; }
+  .dd-phone-watch > .dd-guess { grid-row: 5; position: static; padding: 0; }
+  .dd-phone-watch > .dd-canvas-wrap {
+    grid-column: 1;
+    grid-row: 1 / -1;
+    align-self: center;
+    justify-self: center;
+    width: min(100%, (100vh - var(--stage-chrome-bottom, 0px) - 8px) * var(--dd-ar));
+    width: min(100%, (100dvh - var(--stage-chrome-bottom, 0px) - 8px) * var(--dd-ar));
+  }
+  .dd-phone-watch .dd-hint { font-size: 1.3rem; }
 
   /* Word choice: the three words side by side so they fit the short screen. */
   .dd-phone.dd-phone-choose { max-width: none; gap: var(--space-2); padding-top: max(var(--space-2), env(safe-area-inset-top)); }
   .dd-phone-choose .dd-title { margin: 0; }
   .dd-phone-choose .dd-choices { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 }
-/* Very short (a small phone with browser bars showing): slightly shorter controls leave the feed
-   a couple of lines. Below 44px, the deliberate exception to the target-size rule. */
-@media (orientation: landscape) and (max-height: 280px) {
-  .dd-phone-draw-feed .dd-swatch { height: 38px; }
-  .dd-phone-draw-feed .dd-toolrow .dd-tool, .dd-phone-draw-feed .dd-toolrow .dd-size { min-height: 38px; }
+@keyframes dd-slide { from { opacity: 0; translate: 24px 0; } }
+@media (prefers-reduced-motion: reduce) {
+  .dd-tools[data-open] { animation: none; }
 }
+
+/* ---- ?debugdraw=1 (debugDraw.tsx): last pointerdown's numbers and where it registered ---- */
+.dd-debug { position: absolute; top: 4px; left: 4px; z-index: 5; margin: 0; padding: 4px 6px; border-radius: 6px; background: rgba(0, 0, 0, 0.72); color: #7dff9b; font: 10px/1.35 ui-monospace, Menlo, monospace; white-space: pre; pointer-events: none; }
+.dd-debug-cross { position: absolute; z-index: 5; width: 28px; height: 28px; margin: -14px 0 0 -14px; pointer-events: none; background: linear-gradient(#ef4444, #ef4444) center / 2px 100% no-repeat, linear-gradient(#ef4444, #ef4444) center / 100% 2px no-repeat; }
