@@ -6,6 +6,7 @@ import "../lobby/lobby.css";
 import { PhoneLobby } from "../lobby/PhoneLobby";
 import { ScreenLobby } from "../lobby/ScreenLobby";
 import { GameStage } from "../stage/GameStage";
+import { RoomNoticeAnnouncer, RoomNoticeBanner, useRoomNotice } from "../stage/RoomNotice";
 import { FATAL_ERRORS, JOIN_FAILURES } from "../net/roomState";
 import { useRoom, type HelloInfo } from "../net/useRoom";
 import { Fatal } from "./Fatal";
@@ -31,6 +32,7 @@ function RoomSession({ code: raw, onRejoin }: { code: string; onRejoin(): void }
   const [hello, setHello] = useState<HelloInfo | null>(() => initialHello(code));
   const [nameError, setNameError] = useState<string | null>(null);
   const r = useRoom(code, isRoomCode(code) ? hello : null);
+  const notice = useRoomNotice(r);
 
   useEffect(() => {
     if (!r.error || r.you) return;
@@ -101,7 +103,9 @@ function RoomSession({ code: raw, onRejoin }: { code: string; onRejoin(): void }
             Not enough players connected.
           </Banner>
         )}
+        {notice.text && <RoomNoticeBanner text={notice.text} onDismiss={notice.dismiss} />}
       </div>
+      {r.you.kind === "player" && <RoomNoticeAnnouncer text={notice.text} />}
       {r.room.phase === "lobby" ? (
         r.you.kind === "screen" ? (
           <ScreenLobby room={r.room} youId={r.you.id} isHost={isHost} online={online} sendHost={r.sendHost} />

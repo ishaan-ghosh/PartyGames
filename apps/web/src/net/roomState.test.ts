@@ -90,6 +90,31 @@ describe("reduceServerMsg", () => {
   });
 });
 
+describe("sync session (for live-transition notices)", () => {
+  const welcome = { type: "welcome", token: "t", you: { kind: "player", id: "a" } } as const;
+
+  it("starts a new session on every welcome and marks the room as not yet synced", () => {
+    const live = { ...initialRoomState, status: "open" as const, session: 1, synced: true, room: room("playing") };
+    const s = reduceServerMsg({ ...live, status: "reconnecting" }, welcome, 0);
+    expect(s.session).toBe(2);
+    expect(s.synced).toBe(false);
+    // The room we still hold is the one from before the drop.
+    expect(s.room).toBe(live.room);
+  });
+
+  it("is synced once a room snapshot arrives after the welcome", () => {
+    let s = reduceServerMsg(initialRoomState, welcome, 0);
+    s = reduceServerMsg(s, { type: "room", room: room("playing"), now: 0 }, 0);
+    expect(s.synced).toBe(true);
+    expect(s.session).toBe(1);
+  });
+
+  it("is not synced by a room snapshot that arrives before any welcome", () => {
+    const s = reduceServerMsg(initialRoomState, { type: "room", room: room("lobby"), now: 0 }, 0);
+    expect(s.synced).toBe(false);
+  });
+});
+
 describe("forgetOnFatalError", () => {
   const spyStore = () => {
     const calls: string[] = [];
