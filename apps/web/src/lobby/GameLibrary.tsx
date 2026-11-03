@@ -1,5 +1,5 @@
 import type { CSSProperties } from "react";
-import { clientGames, comingSoon } from "../games";
+import { clientGames } from "../games";
 
 export function GameLibrary({ selected, onSelect, disabled = false }: {
   selected: string;
@@ -23,20 +23,6 @@ export function GameLibrary({ selected, onSelect, disabled = false }: {
           <strong>{g.meta.name}</strong>
           <span className="game-tagline">{g.meta.tagline}</span>
         </button>
-      ))}
-      {comingSoon.map((g) => (
-        <div
-          key={g.id}
-          role="radio"
-          aria-checked={false}
-          aria-disabled={true}
-          className="game-card game-card-soon"
-          style={{ "--card-accent": g.accent } as CSSProperties}
-        >
-          <span className="game-emoji" aria-hidden>{g.emoji}</span>
-          <strong>{g.name}</strong>
-          <span className="game-tagline">Coming soon</span>
-        </div>
       ))}
     </div>
   );
