@@ -252,11 +252,10 @@ for (const viewport of [{ width: 667, height: 375 }, { width: 844, height: 390 }
     await expect(toggle).toBeFocused();
 
     // Escape in the Players dialog (opened from the panel's host bar) closes only the dialog.
-    // Opened from the keyboard: WebKit (like Safari) doesn't focus a clicked button, so after a click
-    // the dialog would hand focus back to the page, not the Players button.
+    // Opened by a click: WebKit (like Safari) doesn't focus the clicked button, so this also checks
+    // that the dialog hands focus back to the button that opened it, not the page.
     await toggle.click();
-    await host.getByTestId("host-players").focus();
-    await host.keyboard.press("Enter");
+    await host.getByTestId("host-players").click();
     const dialog = host.getByRole("dialog");
     await expect(dialog).toBeVisible();
     await host.keyboard.press("Escape");

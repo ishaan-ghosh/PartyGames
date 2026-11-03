@@ -145,3 +145,20 @@ export function lockScroll(doc: { documentElement: StyleHost; body: StyleHost },
     }
   };
 }
+
+/** Something focus can be handed back to (an HTMLElement, structurally). */
+export interface Focusable {
+  isConnected: boolean;
+  focus(): void;
+}
+
+/**
+ * Where focus goes when a modal closes: the element that opened it, if the caller named one and it's
+ * still in the page, else whatever had focus when it opened. Safari (and WebKit) don't focus a button
+ * on click, so for a pointer user the latter is often just <body>: callers should name the trigger.
+ * Null when neither is left (e.g. the kicked player's chip is gone): focus falls back to the page.
+ */
+export function returnFocusTarget<T extends Focusable>(trigger: T | null | undefined, previous: T | null): T | null {
+  if (trigger?.isConnected) return trigger;
+  return previous?.isConnected ? previous : null;
+}

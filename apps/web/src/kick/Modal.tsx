@@ -1,5 +1,5 @@
 import { useEffect, useRef, type ReactNode } from "react";
-import { closeDialog, closeKeyAction, isTextField, lockScroll, openModalDialog, trapTab } from "./dialog";
+import { closeDialog, closeKeyAction, isTextField, lockScroll, openModalDialog, returnFocusTarget, trapTab } from "./dialog";
 import "./kick.css";
 
 const FOCUSABLE = 'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
@@ -7,21 +7,26 @@ const FOCUSABLE = 'button:not([disabled]), [href], input:not([disabled]), select
 /**
  * A modal <dialog> (top layer, inert page behind it). Mount it to open, unmount to close.
  * Focus moves to the first `[data-autofocus]` element (or the first button) on open and whenever
- * `focusKey` changes; on unmount it returns to whatever had focus before. Escape, a TV remote's
+ * `focusKey` changes; on unmount it returns to `returnFocus` (the element that opened it: Safari
+ * doesn't focus a clicked button), else to whatever had focus before. Escape, a TV remote's
  * Back key (see isCloseKey; Backspace only outside a text field) and a click on the backdrop call
  * `onClose`; auto-repeats of a held key are swallowed, not treated as more presses. The page behind doesn't scroll while it's open. Without the <dialog> API the fallback
  * still traps Tab inside (see dialog.ts).
  */
-export function Modal({ labelledBy, onClose, focusKey, className = "", children }: {
+export function Modal({ labelledBy, onClose, focusKey, returnFocus, className = "", children }: {
   labelledBy: string;
   onClose(): void;
   focusKey?: string;
+  /** Where focus goes on close, if still in the page; read at close time. */
+  returnFocus?: HTMLElement | null;
   className?: string;
   children: ReactNode;
 }) {
   const ref = useRef<HTMLDialogElement>(null);
   const onCloseRef = useRef(onClose);
   onCloseRef.current = onClose;
+  const returnFocusRef = useRef(returnFocus);
+  returnFocusRef.current = returnFocus;
   // Set when a key press already closed (or stepped back); the dialog's own `cancel` for that same
   // press must not close a second time.
   const handledKey = useRef(false);
@@ -51,7 +56,7 @@ export function Modal({ labelledBy, onClose, focusKey, className = "", children 
       closeDialog(d);
       unlock();
       // The trigger may be gone (e.g. the kicked player's chip); then focus falls back to the page.
-      if (prev?.isConnected) prev.focus();
+      returnFocusTarget(returnFocusRef.current, prev)?.focus();
     };
   }, []);
 
