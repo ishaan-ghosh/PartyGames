@@ -383,6 +383,33 @@ describe("RoomCore: host handoff and lifetime", () => {
     expect(sent2.find((s) => s.to === "n1" && s.msg.type === "welcome")).toMatchObject({ msg: { you: { id: h.id("c1") } } });
     expect(sent2.filter((s) => s.to === "n1" && s.msg.type === "view").at(-1)?.msg).toMatchObject({ payload: { count: 1 } });
   });
+
+  it("falls back to the default game in the lobby when the saved game isn't registered", () => {
+    for (const gameId of ["constructor", "removed-game"]) {
+      const h = started();
+      const t1 = h.last("c1", "welcome")!.token;
+      const t2 = h.last("c2", "welcome")!.token;
+      const saved = { ...h.core.serialize(), gameId, settings: { custom: true } };
+      const sent2: { to: string; msg: ServerMsg }[] = [];
+      const out2: Outbox = { send: (to, msg) => sent2.push({ to, msg }), close: () => {} };
+      const restored = new RoomCore("ABCD", h.deps, out2, { saved, now: 5000 });
+      expect(restored.serialize()).toMatchObject({
+        gameId: "counter",
+        settings: { target: 3 },
+        phase: "lobby",
+        gameState: null,
+        seated: [],
+      });
+      expect(restored.serialize().members).toHaveLength(3);
+      restored.message("n0", { type: "hello", role: "screen", hostKey: "HOSTKEY" }, 6000);
+      restored.message("n1", { type: "hello", role: "player", token: t1 }, 6000);
+      restored.message("n2", { type: "hello", role: "player", token: t2 }, 6000);
+      expect(sent2.find((s) => s.to === "n1" && s.msg.type === "welcome")).toMatchObject({ msg: { you: { id: h.id("c1") } } });
+      restored.message("n0", { type: "host", cmd: { cmd: "start" } }, 6000);
+      const room = sent2.filter((s) => s.to === "n1" && s.msg.type === "room").at(-1)!.msg as Extract<ServerMsg, { type: "room" }>;
+      expect(room.room).toMatchObject({ phase: "playing", gameId: "counter" });
+    }
+  });
 });
 
 describe("RoomCore: seat replacement and role-aware reclaim", () => {

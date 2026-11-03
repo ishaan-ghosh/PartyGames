@@ -96,6 +96,17 @@ export class RoomCore {
         if (m.connId !== null || typeof m.disconnectedAt !== "number") m.disconnectedAt = restore.now;
         m.connId = null;
       }
+      // The saved game may no longer be registered (removed in a later deploy, or a pre-fix prototype key
+      // like "constructor"): reopen in the lobby with the default game rather than crash on wake.
+      if (!Object.prototype.hasOwnProperty.call(deps.games, this.s.gameId)) {
+        const fallback = deps.games[deps.defaultGameId];
+        if (!fallback) throw new Error(`Unknown default game ${deps.defaultGameId}`);
+        this.s.gameId = deps.defaultGameId;
+        this.s.settings = fallback.defaultSettings;
+        this.s.phase = "lobby";
+        this.s.gameState = null;
+        this.s.seated = [];
+      }
       // Older saves lack seated; best effort is every player seat that existed.
       if (!Array.isArray(this.s.seated)) {
         this.s.seated = this.s.phase === "playing" ? this.s.members.filter((m) => m.kind === "player").map((m) => m.id) : [];
