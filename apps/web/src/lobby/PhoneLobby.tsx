@@ -2,7 +2,7 @@ import type { HostCommand, RoomSnapshot, You } from "@party/shared";
 import { Button, PlayerChip } from "@party/ui";
 import { QRCodeSVG } from "qrcode.react";
 import { Fragment, useState } from "react";
-import { clientGames } from "../games";
+import { getClientGame } from "../games";
 import { publicOrigin } from "../lib/origin";
 import { HostPanel } from "./HostPanel";
 import { Results } from "./Results";
@@ -15,7 +15,7 @@ export function PhoneLobby({ room, you, isHost, online, sendHost }: {
   sendHost(cmd: HostCommand): void;
 }) {
   const me = room.players.find((p) => p.id === you.id);
-  const game = clientGames[room.gameId];
+  const game = getClientGame(room.gameId);
   const [showCode, setShowCode] = useState(false);
   return (
     <div className="phone phone-lobby" data-testid="phone-lobby">

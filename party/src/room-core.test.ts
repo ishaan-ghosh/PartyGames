@@ -280,6 +280,20 @@ describe("RoomCore: host commands and games", () => {
     expect(h.core.serialize().gameState).toBeNull();
   });
 
+  it("rejects game ids that only exist on Object.prototype and keeps the room usable", () => {
+    const h = lobby();
+    h.host("s1", { cmd: "updateSettings", settings: { target: 5 } });
+    for (const gameId of ["constructor", "__proto__", "toString", "hasOwnProperty"]) {
+      expect(h.host("s1", { cmd: "selectGame", gameId })).toEqual({ persist: false });
+      expect(h.last("s1", "error")?.code).toBe("BAD_MESSAGE");
+      const saved = h.core.serialize();
+      expect(saved.gameId).toBe("counter");
+      expect(saved.settings).toEqual({ target: 5 });
+    }
+    h.host("s1", { cmd: "start" });
+    expect(h.last("c1", "room")!.room).toMatchObject({ phase: "playing", gameId: "counter" });
+  });
+
   it("kicks a player but never the host", () => {
     const h = lobby();
     h.host("s1", { cmd: "kick", playerId: h.id("c2") });

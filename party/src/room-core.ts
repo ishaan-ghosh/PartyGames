@@ -353,8 +353,13 @@ export class RoomCore {
     const s = this.s;
     switch (cmd.cmd) {
       case "selectGame": {
-        const game = this.deps.games[cmd.gameId];
-        if (s.phase !== "lobby" || !game) return NO;
+        if (s.phase !== "lobby") return NO;
+        // Own-property lookup: ids like "constructor" or "__proto__" must not resolve via Object.prototype.
+        const game = Object.prototype.hasOwnProperty.call(this.deps.games, cmd.gameId) ? this.deps.games[cmd.gameId] : undefined;
+        if (!game) {
+          this.error(m.connId!, "BAD_MESSAGE", "Unknown game.");
+          return NO;
+        }
         s.gameId = cmd.gameId;
         s.settings = game.defaultSettings;
         break;

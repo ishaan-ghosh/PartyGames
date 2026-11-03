@@ -1,6 +1,6 @@
 import { Banner, useWakeLock, type GameClientProps } from "@party/ui";
 import type { CSSProperties } from "react";
-import { clientGames } from "../games";
+import { getClientGame } from "../games";
 import type { RoomConnection } from "../net/useRoom";
 import { HostBar } from "./HostBar";
 
@@ -13,7 +13,7 @@ export function GameStage({ r, isHost }: { r: RoomConnection; isHost: boolean })
   const room = r.room!;
   const you = r.you!;
   const online = r.status === "open";
-  const game = clientGames[room.gameId];
+  const game = getClientGame(room.gameId);
   // The host keeps Skip/End in every state, so a missing or loading game can't strand the room.
   const hostBar = isHost && (
     <HostBar
