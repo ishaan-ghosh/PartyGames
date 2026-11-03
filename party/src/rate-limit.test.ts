@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { RejectLog, TokenBucket } from "./rate-limit";
+import { MESSAGE_RATE, MessageLimiter, RejectLog, TokenBucket } from "./rate-limit";
 
 describe("TokenBucket", () => {
   it("allows a full burst, then refuses until tokens refill", () => {
@@ -49,5 +49,49 @@ describe("RejectLog", () => {
     expect(JSON.parse(lines[2]!)).toMatchObject({ suppressed: 8 });
     log.log({ conn: "c1", type: "action", reason: "rate_limited" }, 2000);
     expect(JSON.parse(lines[3]!).suppressed).toBeUndefined();
+  });
+});
+
+describe("MessageLimiter", () => {
+  const opts = { burst: 4, perSec: 2, abuseMs: 5000, quietMs: 2000 };
+
+  it("accepts a burst and then drops", () => {
+    const l = new MessageLimiter(0, opts);
+    expect([0, 0, 0, 0, 0].map((t) => l.check(t))).toEqual(["ok", "ok", "ok", "ok", "drop"]);
+    expect(l.check(500)).toBe("ok");
+  });
+
+  it("closes a connection that stays over the limit for abuseMs", () => {
+    const l = new MessageLimiter(0, opts);
+    let last = "ok";
+    let t = 0;
+    // 10 messages a second against a 2/s refill.
+    for (; t < 10_000 && last !== "close"; t += 100) last = l.check(t);
+    expect(last).toBe("close");
+    expect(t - 100).toBeGreaterThanOrEqual(5000);
+    expect(t - 100).toBeLessThan(6000);
+  });
+
+  it("forgives short bursts separated by quiet stretches", () => {
+    const l = new MessageLimiter(0, opts);
+    for (let round = 0; round < 10; round++) {
+      const start = round * 4000;
+      // 1 s of flooding, then 3 s of silence.
+      for (let t = start; t < start + 1000; t += 50) expect(l.check(t)).not.toBe("close");
+    }
+  });
+
+  it("never drops a fast drawer: 40 ms stroke batches plus a new stroke every 100 ms, after a full reconnect flush", () => {
+    const l = new MessageLimiter(0);
+    // Outbox replays up to 50 queued actions plus the hello right after a reconnect.
+    for (let i = 0; i < 51; i++) expect(l.check(0)).toBe("ok");
+    for (let t = 0; t < 120_000; t += 20) {
+      if (t % 40 === 0) expect(l.check(t)).toBe("ok"); // strokeAppend
+      if (t % 100 === 0) expect(l.check(t)).toBe("ok"); // strokeBegin
+    }
+  });
+
+  it("uses a burst that covers the client outbox replay", () => {
+    expect(MESSAGE_RATE.burst).toBeGreaterThanOrEqual(51);
   });
 });

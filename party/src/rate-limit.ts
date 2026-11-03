@@ -62,3 +62,47 @@ export class RejectLog {
 export function label(v: unknown): string {
   return typeof v === "string" && /^[A-Za-z][A-Za-z0-9_-]{0,23}$/.test(v) ? v : "?";
 }
+
+/**
+ * Per-connection message budget. Sized from what a fast Doodle Dash drawer sends: DrawPad flushes a
+ * strokeAppend every 40 ms (25/s) plus a strokeBegin per new stroke (rapid dabbing ≈ 10/s), so ~35/s
+ * sustained; and right after a reconnect the client Outbox replays up to 50 queued actions plus hello
+ * at once. Refill 40/s and burst 80 leave headroom for both.
+ */
+export const MESSAGE_RATE = {
+  burst: 80,
+  perSec: 40,
+  /** A connection that keeps dropping messages for this long is closed. */
+  abuseMs: 5_000,
+  /** A gap this long without a drop ends an over-limit streak. */
+  quietMs: 2_000,
+} as const;
+
+/** WebSocket close code for policy violations (RFC 6455). */
+export const POLICY_CLOSE = 1008;
+
+export type LimitVerdict = "ok" | "drop" | "close";
+
+/**
+ * Token bucket plus abuse detection: messages over budget are dropped; a streak of drops (no gap
+ * longer than `quietMs`) lasting `abuseMs` means the client is flooding, so the caller should close it.
+ */
+export class MessageLimiter {
+  private readonly bucket: TokenBucket;
+  private streakStart: number | null = null;
+  private lastDrop = 0;
+
+  constructor(
+    now: number,
+    private readonly opts: { burst: number; perSec: number; abuseMs: number; quietMs: number } = MESSAGE_RATE,
+  ) {
+    this.bucket = new TokenBucket(opts.burst, opts.perSec, now);
+  }
+
+  check(now: number): LimitVerdict {
+    if (this.bucket.take(now)) return "ok";
+    if (this.streakStart === null || now - this.lastDrop > this.opts.quietMs) this.streakStart = now;
+    this.lastDrop = now;
+    return now - this.streakStart >= this.opts.abuseMs ? "close" : "drop";
+  }
+}

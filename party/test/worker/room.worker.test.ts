@@ -1,5 +1,6 @@
 import { SELF } from "cloudflare:test";
 import { describe, expect, it, vi } from "vitest";
+import { MESSAGE_RATE } from "../../src/rate-limit";
 
 type Msg = { type: string; [k: string]: unknown };
 
@@ -63,6 +64,28 @@ describe("worker", () => {
       expect(lines).toHaveLength(1);
       expect(JSON.parse(lines[0]!)).toMatchObject({ ev: "reject", room: code, type: "action", reason: "no_hello" });
       expect(lines[0]).not.toContain("secret");
+      ws.close();
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it("drops messages past the per-connection rate limit and keeps the socket open for a short burst", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const { code } = await createRoom();
+      const { ws, messages } = await open(code);
+      for (let i = 0; i < 200; i++) ws.send("not json {");
+      await vi.waitFor(() => expect(messages.length).toBeGreaterThanOrEqual(MESSAGE_RATE.burst));
+      // Let any straggling replies land, then check the excess got no reply at all.
+      await new Promise((r) => setTimeout(r, 100));
+      expect(messages.length).toBeLessThan(150);
+      // The log limited itself too: 200 rejections, far fewer lines.
+      const lines = warn.mock.calls.map((c) => String(c[0])).filter((l) => l.includes(`"room":"${code}"`));
+      expect(lines.length).toBeLessThan(40);
+      // Still open: a short burst is dropped, not punished.
+      ws.send(JSON.stringify({ type: "hello", role: "player", name: "Ana" }));
+      await vi.waitFor(() => expect(messages.some((m) => m.type === "welcome")).toBe(true), { timeout: 3000 });
       ws.close();
     } finally {
       warn.mockRestore();

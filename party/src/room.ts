@@ -2,7 +2,7 @@ import { LIMITS, type ServerMsg } from "@party/shared";
 import { Server, type Connection, type WSMessage } from "partyserver";
 import type { Env } from "./env";
 import { DEFAULT_GAME_ID, games } from "./games";
-import { RejectLog } from "./rate-limit";
+import { MessageLimiter, POLICY_CLOSE, RejectLog } from "./rate-limit";
 import { RoomCore, type SavedRoom } from "./room-core";
 
 const KEY = "room";
@@ -22,6 +22,7 @@ export class Room extends Server<Env> {
   private core!: RoomCore;
   private scheduled: number | null = null;
   private rejects?: RejectLog;
+  private readonly limiters = new Map<string, MessageLimiter>();
 
   private get rejectLog(): RejectLog {
     return (this.rejects ??= new RejectLog(this.name));
@@ -73,8 +74,24 @@ export class Room extends Server<Env> {
   }
 
   onMessage(conn: Connection, message: WSMessage) {
+    const now = Date.now();
+    let limiter = this.limiters.get(conn.id);
+    if (!limiter) this.limiters.set(conn.id, (limiter = new MessageLimiter(now)));
+    const verdict = limiter.check(now);
+    if (verdict !== "ok") {
+      // Dropped silently: answering a flood would only amplify it.
+      this.rejectLog.log({ conn: conn.id, type: "?", reason: verdict === "close" ? "rate_abuse" : "rate_limited" }, now);
+      if (verdict === "close") {
+        try {
+          conn.close(POLICY_CLOSE, "too many messages");
+        } catch {
+          // Already closing: frames still in flight keep landing here until onClose.
+        }
+      }
+      return;
+    }
     if (frameBytes(message) > MAX_FRAME_BYTES) {
-      this.rejectLog.log({ conn: conn.id, type: "?", reason: "too_large" }, Date.now());
+      this.rejectLog.log({ conn: conn.id, type: "?", reason: "too_large" }, now);
       const err: ServerMsg = { type: "error", code: "BAD_MESSAGE", message: "Message too large." };
       conn.send(JSON.stringify(err));
       return;
@@ -87,15 +104,17 @@ export class Room extends Server<Env> {
         data = null;
       }
     }
-    const r = this.core.message(conn.id, data, Date.now());
+    const r = this.core.message(conn.id, data, now);
     void this.after(r.persist);
   }
 
   onClose(conn: Connection) {
+    this.limiters.delete(conn.id);
     void this.after(this.core.disconnect(conn.id, Date.now()).persist);
   }
 
   onError(conn: Connection) {
+    this.limiters.delete(conn.id);
     void this.after(this.core.disconnect(conn.id, Date.now()).persist);
   }
 
