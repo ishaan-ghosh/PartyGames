@@ -17,10 +17,13 @@ export function GameStage({ r, isHost }: { r: RoomConnection; isHost: boolean })
   // The host keeps Skip/End in every state, so a missing or loading game can't strand the room.
   const hostBar = isHost && (
     <HostBar
+      room={room}
+      youId={you.id}
       disabled={!online}
       confirmSkip={you.kind === "player"}
       onSkip={() => r.sendHost({ cmd: "skip" })}
       onEnd={() => r.sendHost({ cmd: "endGame" })}
+      onKick={(playerId) => r.sendHost({ cmd: "kick", playerId })}
     />
   );
   const stageClass = `stage stage-${you.kind}`;

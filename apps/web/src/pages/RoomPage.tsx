@@ -104,7 +104,7 @@ function RoomSession({ code: raw, onRejoin }: { code: string; onRejoin(): void }
       </div>
       {r.room.phase === "lobby" ? (
         r.you.kind === "screen" ? (
-          <ScreenLobby room={r.room} isHost={isHost} online={online} sendHost={r.sendHost} />
+          <ScreenLobby room={r.room} youId={r.you.id} isHost={isHost} online={online} sendHost={r.sendHost} />
         ) : (
           <PhoneLobby room={r.room} you={r.you} isHost={isHost} online={online} sendHost={r.sendHost} />
         )
