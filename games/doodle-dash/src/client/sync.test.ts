@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import type { Stroke } from "../rules";
-import { QUIET_MS, RACE_MS, acceptOp, resetLive, shouldAdoptView, type LiveSeq, type SyncInput } from "./sync";
+import type { Stroke, StrokeOp } from "../rules";
+import { BUFFER_MAX, BUFFER_MS, QUIET_MS, adoptView, receiveOp, shouldAdoptView, type LiveSeq, type SyncInput } from "./sync";
 
 const pen = (id: number, points: number[]): Stroke => ({ id, tool: "pen", color: 0, size: 0, points });
 
@@ -14,8 +14,6 @@ const base: SyncInput = {
   drawing: false,
   pendingPoints: 0,
   msSinceLastSend: 60_000,
-  recentOps: [],
-  now: 100_000,
 };
 
 describe("shouldAdoptView: viewers", () => {
@@ -32,27 +30,9 @@ describe("shouldAdoptView: viewers", () => {
     expect(shouldAdoptView({ ...base, viewOpSeq: 5, localSeq: 5, viewStrokes: [pen(1, [0, 0]), pen(2, [1, 1])] })).toBe(true);
   });
 
-  it("keeps the local list when live ops that arrived just now explain why the view is behind", () => {
-    // The view was queued for render, then ops 5..7 arrived before the effect ran.
-    const recentOps = [5, 6, 7].map((seq) => ({ seq, at: base.now - 20 }));
-    expect(shouldAdoptView({ ...base, viewOpSeq: 4, localSeq: 7, recentOps })).toBe(false);
-  });
-
-  it("adopts a view behind the local seq when recent ops don't explain it (server restarted)", () => {
+  it("adopts a view behind the local seq (overtaken by live ops, or a restarted server)", () => {
+    expect(shouldAdoptView({ ...base, viewOpSeq: 4, localSeq: 7 })).toBe(true);
     expect(shouldAdoptView({ ...base, viewOpSeq: 10, localSeq: 50 })).toBe(true);
-    const old = [11, 12].map((seq) => ({ seq, at: base.now - RACE_MS - 1 }));
-    expect(shouldAdoptView({ ...base, viewOpSeq: 10, localSeq: 12, recentOps: old })).toBe(true);
-    // Only part of the gap arrived recently.
-    expect(shouldAdoptView({ ...base, viewOpSeq: 10, localSeq: 12, recentOps: [{ seq: 12, at: base.now }] })).toBe(true);
-  });
-
-  it("accepts live ops again after adopting a reset server's view", () => {
-    const live: LiveSeq = { seq: 50, recent: [] };
-    expect(acceptOp(live, 11, base.now)).toBe(false);
-    expect(shouldAdoptView({ ...base, viewOpSeq: 10, localSeq: live.seq, recentOps: live.recent })).toBe(true);
-    resetLive(live, 10);
-    expect(acceptOp(live, 11, base.now)).toBe(true);
-    expect(live.seq).toBe(11);
   });
 
   it("always adopts on a new turn", () => {
@@ -97,12 +77,83 @@ describe("shouldAdoptView: drawer", () => {
   });
 });
 
-describe("acceptOp", () => {
-  it("drops stale or duplicate ops and remembers only the last RACE_MS of accepted ones", () => {
-    const live: LiveSeq = { seq: 3, recent: [] };
-    expect(acceptOp(live, 3, 0)).toBe(false);
-    expect(acceptOp(live, 4, 0)).toBe(true);
-    expect(acceptOp(live, 5, RACE_MS + 1)).toBe(true);
-    expect(live.recent).toEqual([{ seq: 5, at: RACE_MS + 1 }]);
+const begin = (seq: number, id = seq): StrokeOp => ({ op: "begin", seq, stroke: pen(id, [0, 0]) });
+const ids = (strokes: readonly Stroke[]) => strokes.map((x) => x.id);
+const NOW = 100_000;
+
+describe("receiveOp", () => {
+  it("applies only the next op in sequence", () => {
+    const live: LiveSeq = { seq: 3, buffer: [] };
+    expect(receiveOp(live, begin(4), NOW)).toBe(true);
+    expect(live.seq).toBe(4);
+  });
+
+  it("ignores duplicates and stale ops", () => {
+    const live: LiveSeq = { seq: 4, buffer: [] };
+    expect(receiveOp(live, begin(4), NOW)).toBe(false);
+    expect(receiveOp(live, begin(2), NOW)).toBe(false);
+    expect(live.seq).toBe(4);
+  });
+
+  it("does not apply an op after a gap (the next view resyncs)", () => {
+    const live: LiveSeq = { seq: 4, buffer: [] };
+    expect(receiveOp(live, begin(6), NOW)).toBe(false);
+    expect(live.seq).toBe(4);
+  });
+
+  it("keeps the buffer within the time window and count cap", () => {
+    const live: LiveSeq = { seq: 0, buffer: [] };
+    receiveOp(live, begin(1), NOW - BUFFER_MS - 1);
+    receiveOp(live, begin(2), NOW);
+    expect(live.buffer.map((b) => b.op.seq)).toEqual([2]);
+    for (let q = 3; q < BUFFER_MAX + 10; q++) receiveOp(live, begin(q), NOW);
+    expect(live.buffer).toHaveLength(BUFFER_MAX);
+  });
+});
+
+describe("adoptView", () => {
+  it("replays buffered ops past a reconnect view even when the local seq was further behind (F1)", () => {
+    const live: LiveSeq = { seq: 10, buffer: [] };
+    // Ops 16, 17 arrive before the reconnect view (opSeq 15) reaches the effect: not applicable yet.
+    expect(receiveOp(live, begin(16), NOW)).toBe(false);
+    expect(receiveOp(live, begin(17), NOW)).toBe(false);
+    const strokes = adoptView(live, [pen(1, [0, 0])], 15);
+    expect(ids(strokes)).toEqual([1, 16, 17]);
+    expect(live.seq).toBe(17);
+  });
+
+  it("rebuilds the same list when a view was merely overtaken by contiguous live ops", () => {
+    const live: LiveSeq = { seq: 4, buffer: [] };
+    let local: Stroke[] = [pen(1, [0, 0])];
+    for (const op of [begin(5), begin(6)]) if (receiveOp(live, op, NOW)) local = [...local, ...(op.op === "begin" ? [op.stroke] : [])];
+    const strokes = adoptView(live, [pen(1, [0, 0])], 4);
+    expect(ids(strokes)).toEqual(ids(local));
+    expect(live.seq).toBe(6);
+  });
+
+  it("recovers from a server restart: ops the new server sent before its view are replayed (F3)", () => {
+    const live: LiveSeq = { seq: 50, buffer: [] };
+    expect(receiveOp(live, begin(11), NOW)).toBe(false); // stale by the old seq, but buffered
+    const strokes = adoptView(live, [pen(1, [0, 0])], 10);
+    expect(ids(strokes)).toEqual([1, 11]);
+    expect(live.seq).toBe(11);
+    expect(receiveOp(live, begin(12), NOW)).toBe(true);
+  });
+
+  it("stops replaying at the first gap", () => {
+    const live: LiveSeq = { seq: 10, buffer: [] };
+    receiveOp(live, begin(12), NOW);
+    receiveOp(live, begin(14), NOW);
+    const strokes = adoptView(live, [], 11);
+    expect(ids(strokes)).toEqual([12]);
+    expect(live.seq).toBe(12);
+  });
+
+  it("prefers the most recently received op when a seq repeats (old server vs restarted one)", () => {
+    const live: LiveSeq = { seq: 10, buffer: [] };
+    receiveOp(live, begin(11, 111), NOW - 10);
+    live.seq = 50; // old server moved on, then restarted
+    receiveOp(live, begin(11, 211), NOW);
+    expect(ids(adoptView(live, [], 10))).toEqual([211]);
   });
 });
