@@ -1,7 +1,8 @@
+import { doodleClient } from "@party/doodle-dash/client";
 import type { ClientGame } from "@party/ui";
 
-/** Playable games, keyed by id. Games register here (Doodle Dash is added in Task 12). */
-export const clientGames: Record<string, ClientGame> = {};
+/** Playable games, keyed by id. */
+export const clientGames: Record<string, ClientGame> = { [doodleClient.id]: doodleClient };
 
 export const comingSoon: { id: string; name: string; tagline: string; emoji: string; accent: string }[] = [
   { id: "puff-up", name: "Puff Up", tagline: "Answer before it pops.", emoji: "🐡", accent: "#ff8906" },
