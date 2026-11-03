@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { CHOOSE_MS, REVEAL_MS, type DoodleView } from "../rules";
-import { phaseTotal, timerFor } from "./phase";
+import { drawerSeesFeed, phaseTotal, timerFor } from "./phase";
 
 const base: DoodleView = {
   turnKey: "1:0",
@@ -39,5 +39,15 @@ describe("timerFor", () => {
 
   it("hides the countdown once the game is over", () => {
     expect(timerFor({ ...base, phase: "over" })).toBeNull();
+  });
+});
+
+describe("drawerSeesFeed", () => {
+  it("shows the drawer the guess feed when there is no TV to watch it on", () => {
+    expect(drawerSeesFeed("phones")).toBe(true);
+  });
+
+  it("leaves the feed to the TV in screen mode, so the drawer's canvas keeps its room", () => {
+    expect(drawerSeesFeed("screen")).toBe(false);
   });
 });

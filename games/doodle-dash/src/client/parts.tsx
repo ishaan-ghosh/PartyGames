@@ -50,6 +50,16 @@ export function Feed({ items, players, compact = false }: { items: ViewFeedItem[
     const el = ref.current;
     if (el) el.scrollTop = el.scrollHeight;
   }, [items]);
+  // Keep the newest item in view when the feed is resized (e.g. the phone is rotated).
+  useEffect(() => {
+    const el = ref.current;
+    if (!el || typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver(() => {
+      el.scrollTop = el.scrollHeight;
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
   const nameOf = (id: string | null) => players.find((p) => p.id === id)?.name ?? "";
   return (
     <div ref={ref} className={`dd-feed ${compact ? "dd-feed-compact" : ""}`} aria-live="polite">

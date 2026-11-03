@@ -155,11 +155,6 @@ export function DrawPad({ strokes, setStrokes, send, activity, fillsLeft: server
 
   return (
     <div className="dd-pad">
-      {/* Always rendered; doodle.css only shows it on a short landscape screen (a sideways phone). */}
-      <div className="dd-rotate" role="status" data-testid="rotate-hint">
-        <span className="dd-rotate-icon" aria-hidden>📱↻</span>
-        <p className="dd-rotate-text">Turn your phone upright to draw</p>
-      </div>
       <div className="dd-canvas-cell">
         <CanvasView
           strokes={strokes}
