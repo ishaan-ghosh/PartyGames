@@ -15,6 +15,8 @@
 .host-panel { display: grid; gap: var(--space-4); }
 .host-panel-body { display: grid; gap: var(--space-4); align-content: start; }
 .game-library { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: var(--space-3); }
+/* auto-fit collapses empty tracks, so a lone card fills the phone row (the TV keeps auto-fill). */
+.phone .game-library { grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); }
 .game-card { --card-accent: var(--violet); display: grid; gap: var(--space-1); justify-items: start; text-align: left; padding: var(--space-4); border-radius: var(--radius); border: 2px solid var(--line); background: var(--bg-raised-2); color: var(--text); font: inherit; cursor: pointer; transition: transform 0.2s var(--ease-spring), border-color 0.2s; }
 .game-card.on { border-color: var(--card-accent); transform: translateY(-3px); box-shadow: 0 8px 24px color-mix(in srgb, var(--card-accent) 35%, transparent); }
 .game-card:disabled { cursor: not-allowed; opacity: 0.6; }
