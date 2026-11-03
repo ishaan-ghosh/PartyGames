@@ -116,6 +116,11 @@
 .banner-stack { position: fixed; top: max(12px, env(safe-area-inset-top)); left: 50%; transform: translateX(-50%); z-index: 50; display: flex; flex-direction: column; align-items: center; gap: var(--space-2); width: max-content; max-width: calc(100% - 32px); pointer-events: none; }
 .banner-stack:empty { display: none; }
 .banner-stack > .banner { pointer-events: auto; box-shadow: var(--shadow); max-width: 100%; }
+/* Transient room notice (RoomNotice): the live region adds no box of its own, so an empty one costs no gap. */
+.room-notice-live { display: contents; }
+.room-notice { pointer-events: auto; box-shadow: var(--shadow); max-width: 100%; padding: var(--space-2) var(--space-2) var(--space-2) var(--space-4); font-size: 0.95rem; cursor: pointer; animation: chip-in 0.3s var(--ease-spring); }
+.room-notice-close { appearance: none; border: 0; background: transparent; color: var(--text-dim); font-size: 1rem; min-width: 32px; min-height: 32px; border-radius: 50%; cursor: pointer; }
+.room-notice-close:focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; }
 
 /*
  * Player stage: the host bar (bottom-left) and mute toggle (bottom-right) are fixed 48px buttons 12px

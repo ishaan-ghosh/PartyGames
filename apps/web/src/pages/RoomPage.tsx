@@ -6,6 +6,7 @@ import "../lobby/lobby.css";
 import { PhoneLobby } from "../lobby/PhoneLobby";
 import { ScreenLobby } from "../lobby/ScreenLobby";
 import { GameStage } from "../stage/GameStage";
+import { RoomNotice } from "../stage/RoomNotice";
 import { FATAL_ERRORS, JOIN_FAILURES } from "../net/roomState";
 import { useRoom, type HelloInfo } from "../net/useRoom";
 import { Fatal } from "./Fatal";
@@ -101,6 +102,7 @@ function RoomSession({ code: raw, onRejoin }: { code: string; onRejoin(): void }
             Not enough players connected.
           </Banner>
         )}
+        {r.you.kind === "player" && <RoomNotice r={r} />}
       </div>
       {r.room.phase === "lobby" ? (
         r.you.kind === "screen" ? (
