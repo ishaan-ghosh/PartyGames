@@ -14,15 +14,19 @@ export function syncOp(s: DoodleState): StrokeOp {
   return { op: "sync", seq: s.opSeq, strokes: s.strokes.map((st) => (st.tool === "fill" ? { ...st } : { ...st, points: [...st.points] })) };
 }
 
-/** Applies a drawer's stroke action. Always quiet; accepted actions carry one op event for the others. */
+/**
+ * Applies a drawer's stroke action. Always quiet; accepted actions carry one op event for the others,
+ * refused ones a `rejected` reason code for the room's log.
+ */
 export function handleStroke(s: DoodleState, playerId: string, action: StrokeAction): ActionResult<DoodleState> {
-  const ignore: ActionResult<DoodleState> = { state: s, quiet: true };
-  if (s.phase !== "drawing" || playerId !== s.drawerId) return ignore;
+  const ignore = (rejected: string): ActionResult<DoodleState> => ({ state: s, quiet: true, rejected });
+  if (s.phase !== "drawing") return ignore("wrong_phase");
+  if (playerId !== s.drawerId) return ignore("not_drawer");
   let op: StrokeOp;
   switch (action.t) {
     case "strokeBegin": {
       const cost = action.points.length + STROKE_COST;
-      if (s.ink + cost > INK_LIMIT) return ignore;
+      if (s.ink + cost > INK_LIMIT) return ignore("ink_limit");
       s.ink += cost;
       const stroke: Stroke = { id: s.nextStrokeId++, tool: action.tool, color: action.color, size: action.size, points: [...action.points] };
       s.strokes.push(stroke);
@@ -35,8 +39,8 @@ export function handleStroke(s: DoodleState, playerId: string, action: StrokeAct
       // appending would extend some earlier stroke (wrong color, a line joining the two).
       const last = s.strokes.at(-1);
       const open = s.openStroke;
-      if (!last || last.tool === "fill" || !open || open.key !== action.id || open.strokeId !== last.id) return ignore;
-      if (s.ink + action.points.length > INK_LIMIT) return ignore;
+      if (!last || last.tool === "fill" || !open || open.key !== action.id || open.strokeId !== last.id) return ignore("no_open_stroke");
+      if (s.ink + action.points.length > INK_LIMIT) return ignore("ink_limit");
       s.ink += action.points.length;
       last.points.push(...action.points);
       op = { op: "append", seq: ++s.opSeq, strokeId: last.id, points: [...action.points] };
@@ -44,7 +48,8 @@ export function handleStroke(s: DoodleState, playerId: string, action: StrokeAct
     }
     case "fill": {
       const fills = s.fills ?? 0;
-      if (fills >= MAX_FILLS || s.ink + 2 + STROKE_COST > INK_LIMIT) return ignore;
+      if (fills >= MAX_FILLS) return ignore("fill_limit");
+      if (s.ink + 2 + STROKE_COST > INK_LIMIT) return ignore("ink_limit");
       s.fills = fills + 1;
       s.ink += 2 + STROKE_COST;
       const stroke: Stroke = { id: s.nextStrokeId++, tool: "fill", color: action.color, x: action.x, y: action.y };
@@ -53,19 +58,19 @@ export function handleStroke(s: DoodleState, playerId: string, action: StrokeAct
       break;
     }
     case "undo": {
-      if (s.strokes.length === 0) return ignore;
+      if (s.strokes.length === 0) return ignore("nothing_to_undo");
       s.strokes.pop();
       op = { op: "undo", seq: ++s.opSeq };
       break;
     }
     case "clear": {
-      if (s.strokes.length === 0) return ignore;
+      if (s.strokes.length === 0) return ignore("nothing_to_clear");
       s.strokes = [];
       op = { op: "clear", seq: ++s.opSeq };
       break;
     }
     default:
-      return ignore;
+      return ignore("bad_action");
   }
   return { state: s, quiet: true, events: [{ to: "others", payload: op }] };
 }

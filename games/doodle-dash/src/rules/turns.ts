@@ -133,7 +133,9 @@ export function chooseWord(s: DoodleState, index: number, now: number): DoodleSt
 }
 
 export function onChoose(s: DoodleState, playerId: string, index: number, now: number): ActionResult<DoodleState> {
-  if (s.phase !== "choosing" || playerId !== s.drawerId || !s.choices[index]) return { state: s, quiet: true };
+  if (s.phase !== "choosing") return { state: s, quiet: true, rejected: "wrong_phase" };
+  if (playerId !== s.drawerId) return { state: s, quiet: true, rejected: "not_drawer" };
+  if (!s.choices[index]) return { state: s, quiet: true, rejected: "bad_choice" };
   return { state: chooseWord(s, index, now) };
 }
 

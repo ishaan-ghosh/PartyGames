@@ -4,7 +4,7 @@ import type { Rejection } from "./rate-limit";
 import { RoomCore, type CoreDeps, type Outbox } from "./room-core";
 
 interface CState { count: number; target: number; endsAt: number | null; players: string[]; names: Record<string, string>; presence: Record<string, boolean> }
-type CAction = { t: "inc" } | { t: "ping" };
+type CAction = { t: "inc" } | { t: "ping" } | { t: "refuse" };
 
 /** Tiny fake game so room behavior is tested independently of Doodle Dash. */
 const counter: GameModule<CState, CAction, { target: number }> = {
@@ -17,7 +17,7 @@ const counter: GameModule<CState, CAction, { target: number }> = {
   },
   parseAction: (input) => {
     const t = (input as { t?: unknown } | null)?.t;
-    return t === "inc" || t === "ping" ? { t } : null;
+    return t === "inc" || t === "ping" || t === "refuse" ? { t } : null;
   },
   setup: (players, settings, _seed, now) => ({
     count: 0,
@@ -28,7 +28,11 @@ const counter: GameModule<CState, CAction, { target: number }> = {
     presence: {},
   }),
   onAction: (s, _id, a) =>
-    a.t === "ping" ? { state: s, quiet: true, events: [{ to: "others", payload: "pong" }] } : { state: { ...s, count: s.count + 1 } },
+    a.t === "refuse"
+      ? { state: s, quiet: true, rejected: "not_allowed" }
+      : a.t === "ping"
+        ? { state: s, quiet: true, events: [{ to: "others", payload: "pong" }] }
+        : { state: { ...s, count: s.count + 1 } },
   onTimer: (s, now) => (s.endsAt !== null && now >= s.endsAt ? { ...s, count: s.count + 1, endsAt: null } : s),
   nextTimerAt: (s) => s.endsAt,
   onPresence: (s, id, connected) => ({ ...s, presence: { ...s.presence, [id]: connected } }),
@@ -732,7 +736,31 @@ describe("RoomCore: logging rejected messages", () => {
   it("does not report accepted messages", () => {
     const h = started();
     h.core.message("c1", { type: "action", payload: { t: "inc" } }, 0);
+    h.core.message("c1", { type: "action", payload: { t: "ping" } }, 0); // quiet, but accepted
     expect(h.rejects).toEqual([]);
+  });
+
+  it("reports moves the game refuses, with type and reason only, and keeps them quiet", () => {
+    const h = started();
+    const before = h.sent.length;
+    expect(h.core.message("c1", { type: "action", payload: { t: "refuse", text: "secret" } }, 0)).toEqual({ persist: false });
+    expect(h.sent.length).toBe(before);
+    expect(h.rejects).toEqual([{ conn: "c1", player: h.id("c1"), type: "action:refuse", reason: "not_allowed" }]);
+    expect(JSON.stringify(h.rejects)).not.toContain("secret");
+  });
+
+  it("squeezes a game's refusal reason into a short label", () => {
+    const g: GameModule<CState, CAction, { target: number }> = {
+      ...counter,
+      onAction: (s) => ({ state: s, quiet: true, rejected: "free text\nwith a guess in it" }),
+    };
+    const h = setup({ game: g });
+    h.screen("s1", { hostKey: "HOSTKEY" });
+    h.player("c1", "Ana");
+    h.player("c2", "Ben");
+    h.host("s1", { cmd: "start" });
+    h.core.message("c1", { type: "action", payload: { t: "inc" } }, 0);
+    expect(h.rejects).toEqual([{ conn: "c1", player: h.id("c1"), type: "action:inc", reason: "?" }]);
   });
 });
 

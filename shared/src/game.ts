@@ -4,8 +4,13 @@ export interface PlayerInfo { id: string; name: string; avatar: Avatar; connecte
 export type Viewer = { kind: "screen" } | { kind: "player"; playerId: string };
 /** "others" = every connected device except the one that sent the action. */
 export interface GameEvent { to: "all" | "others"; payload: unknown }
-/** quiet: true → the room relays `events` but does NOT rebroadcast views or persist. */
-export interface ActionResult<S> { state: S; events?: GameEvent[]; quiet?: boolean }
+/**
+ * quiet: true → the room relays `events` but does NOT rebroadcast views or persist.
+ * rejected: the game refused the action; a short reason code (e.g. "not_drawer", "wrong_phase") the
+ * room logs with the action type. Never put player text in it. Independent of `quiet`: a refused
+ * action can still return changed state (e.g. timers caught up), and the room handles that as usual.
+ */
+export interface ActionResult<S> { state: S; events?: GameEvent[]; quiet?: boolean; rejected?: string }
 /** A separately stored piece of game state. Equal `rev` means equal `value`. */
 export interface SavePart { rev: string; value: unknown }
 export interface GameMeta { name: string; tagline: string; minPlayers: number; maxPlayers: number; accent: string }

@@ -5,7 +5,8 @@ import type { DoodleState } from "./types";
 
 export function handleGuess(s: DoodleState, playerId: string, text: string, now: number): ActionResult<DoodleState> {
   const clean = text.trim().replace(/\s+/g, " ").slice(0, 60);
-  if (!clean || !(playerId in s.scores)) return { state: s, quiet: true };
+  if (!clean) return { state: s, quiet: true, rejected: "empty_guess" };
+  if (!(playerId in s.scores)) return { state: s, quiet: true, rejected: "not_seated" };
 
   if (s.phase !== "drawing" || !s.word) {
     // A late guess that is (or contains) the word stays private, so a correct guess is never shown.
@@ -14,7 +15,7 @@ export function handleGuess(s: DoodleState, playerId: string, text: string, now:
     pushFeed(s, { kind: "chat", playerId, text: clean, audience: hidden ? { only: playerId } : "all" });
     return { state: s };
   }
-  if (playerId === s.drawerId) return { state: s, quiet: true };
+  if (playerId === s.drawerId) return { state: s, quiet: true, rejected: "drawer_guess" };
   if (s.solvers.includes(playerId)) {
     pushFeed(s, { kind: "chat", playerId, text: clean, audience: "solvers" });
     return { state: s };

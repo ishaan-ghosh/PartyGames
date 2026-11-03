@@ -437,6 +437,8 @@ export class RoomCore {
     }
     const res = this.game.onAction(this.s.gameState, m.id, action, now);
     this.s.gameState = res.state;
+    // Reason code only, squeezed through label(): it is game-chosen, but must stay a short identifier.
+    if (res.rejected !== undefined) reject(label(res.rejected));
     for (const ev of res.events ?? []) {
       for (const c of this.connected()) {
         if (ev.to === "all" || c.id !== m.id) this.out.send(c.connId!, { type: "event", payload: ev.payload });
