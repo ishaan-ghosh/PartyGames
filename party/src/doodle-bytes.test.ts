@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { ServerMsg } from "@party/shared";
 import { games } from "./games";
 import { RoomCore, type CoreDeps, type Outbox } from "./room-core";
+import { ROOM_KEY, SavePlanner } from "./save-plan";
 
 /**
  * Wire and storage cost of Doodle Dash with a realistic drawing on the canvas: ~100 strokes of
@@ -52,6 +53,32 @@ describe("doodle dash bytes per guess", () => {
     // Before strokes left the view this was ~319 KB (every view carried the ~53 KB drawing).
     expect(sent.slice(before).some((s) => JSON.stringify(s.msg).includes("points"))).toBe(false);
     expect(wire).toBeLessThan(20_000);
+  });
+
+  it("a guess rewrites the room record but none of the ink in storage", () => {
+    const { core, guesser } = room();
+    const planner = new SavePlanner();
+    const bytes = (put: Record<string, unknown>) => JSON.stringify(put).length;
+    const first = planner.plan(core.serializeSplit());
+    expect(Object.keys(first.put)).toHaveLength(1 + Math.ceil(100 / 32));
+    core.message(guesser, { type: "action", payload: { t: "guess", text: "definitely not it" } }, 3);
+    const { put, del } = planner.plan(core.serializeSplit());
+    expect(Object.keys(put)).toEqual([ROOM_KEY]);
+    expect(del).toEqual([]);
+    // Before strokes were split out, every save was the whole ~54 KB room.
+    expect(bytes(put)).toBeLessThan(10_000);
+    expect(bytes(first.put)).toBeGreaterThan(50_000);
+  });
+
+  it("restores a split save with the whole drawing", () => {
+    const { core } = room();
+    const { saved, parts } = structuredClone(core.serializeSplit());
+    const values = Object.fromEntries(Object.entries(parts).map(([k, p]) => [k, p.value]));
+    const deps: CoreDeps = { newId: () => "x", newSeed: () => 1, games, defaultGameId: "doodle-dash" };
+    const restored = new RoomCore("ABCD", deps, { send: () => {}, close: () => {} }, { saved, now: 10, parts: values });
+    const state = restored.serialize();
+    expect(state.parts).toBeUndefined();
+    expect((state.gameState as { strokes: unknown[] }).strokes).toEqual((core.serialize().gameState as { strokes: unknown[] }).strokes);
   });
 
   it("a screen joining mid-drawing gets the whole drawing once, as a sync event after its view", () => {

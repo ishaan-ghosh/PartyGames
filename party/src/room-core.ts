@@ -9,6 +9,7 @@ import {
   type HostCommand,
   type PlayerInfo,
   type RoomSnapshot,
+  type SavePart,
   type ServerMsg,
   type Viewer,
 } from "@party/shared";
@@ -55,6 +56,8 @@ export interface SavedRoom {
   seated: string[];
   lastResults: GameResult[] | null;
   emptySince: number | null;
+  /** Names of game-state parts stored under their own keys (see GameModule.splitSave). */
+  parts?: string[];
 }
 
 export interface Handled { persist: boolean }
@@ -91,10 +94,12 @@ export class RoomCore {
     code: string,
     private readonly deps: CoreDeps,
     private readonly out: Outbox,
-    restore?: { saved: SavedRoom; now: number },
+    restore?: { saved: SavedRoom; now: number; parts?: Record<string, unknown> },
   ) {
     if (restore) {
       this.s = structuredClone(restore.saved);
+      const partNames = this.s.parts;
+      delete this.s.parts;
       for (const m of this.s.members) {
         // Older saves lack disconnectedAt; anyone connected at save time dropped "now".
         if (m.connId !== null || typeof m.disconnectedAt !== "number") m.disconnectedAt = restore.now;
@@ -116,6 +121,10 @@ export class RoomCore {
         this.s.seated = this.s.phase === "playing" ? this.s.members.filter((m) => m.kind === "player").map((m) => m.id) : [];
       }
       this.s.emptySince ??= restore.now;
+      if (this.s.phase === "playing" && partNames?.length && this.game.joinSave) {
+        const parts = Object.fromEntries(partNames.map((n) => [n, restore.parts?.[n]]));
+        this.s.gameState = this.game.joinSave(this.s.gameState, parts);
+      }
       if (this.s.phase === "playing") {
         for (const m of this.s.members) {
           if (m.kind === "player") this.s.gameState = this.game.onPresence(this.s.gameState, m.id, false, restore.now);
@@ -146,6 +155,14 @@ export class RoomCore {
 
   serialize(): SavedRoom {
     return structuredClone(this.s);
+  }
+
+  /** Like serialize, with the game's bulky parts split out to be stored under their own keys. */
+  serializeSplit(): { saved: SavedRoom; parts: Record<string, SavePart> } {
+    if (this.s.phase !== "playing" || !this.game.splitSave) return { saved: this.serialize(), parts: {} };
+    const { state, parts } = this.game.splitSave(this.s.gameState);
+    const saved = structuredClone({ ...this.s, gameState: state, parts: Object.keys(parts) });
+    return { saved, parts };
   }
 
   message(connId: string, raw: unknown, now: number): Handled {

@@ -6,6 +6,8 @@ export type Viewer = { kind: "screen" } | { kind: "player"; playerId: string };
 export interface GameEvent { to: "all" | "others"; payload: unknown }
 /** quiet: true → the room relays `events` but does NOT rebroadcast views or persist. */
 export interface ActionResult<S> { state: S; events?: GameEvent[]; quiet?: boolean }
+/** A separately stored piece of game state. Equal `rev` means equal `value`. */
+export interface SavePart { rev: string; value: unknown }
 export interface GameMeta { name: string; tagline: string; minPlayers: number; maxPlayers: number; accent: string }
 
 /**
@@ -32,6 +34,13 @@ export interface GameModule<S, A, Settings> {
    * (throttled). Return null to send nothing.
    */
   sync?(state: S, viewer: Viewer): unknown;
+  /**
+   * Optional: moves bulky, append-mostly data out of the saved state. Each part is stored under its
+   * own key and rewritten only when its `rev` changes, so a save after e.g. a guess skips it. Must
+   * not mutate `state`; `joinSave` reverses it on restore (a part may be missing: tolerate it).
+   */
+  splitSave?(state: S): { state: S; parts: Record<string, SavePart> };
+  joinSave?(state: S, parts: Record<string, unknown>): S;
   isOver(state: S): boolean;
   results(state: S): GameResult[];
 }

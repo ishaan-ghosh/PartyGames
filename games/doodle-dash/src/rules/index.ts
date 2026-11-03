@@ -3,6 +3,7 @@ import { parseAction } from "./actions";
 import { handleGuess } from "./guess";
 import { onPresence } from "./presence";
 import { defaultSettings, parseSettings } from "./settings";
+import { joinSave, splitSave } from "./save";
 import { handleStroke, syncOp } from "./strokes";
 import { nextTimerAt, onChoose, onSkip, onTimer, setup } from "./turns";
 import type { DoodleAction, DoodleSettings, DoodleState } from "./types";
@@ -42,6 +43,8 @@ export const doodleDash: GameModule<DoodleState, DoodleAction, DoodleSettings> =
   onSkip,
   view,
   sync: (s) => syncOp(s),
+  splitSave,
+  joinSave,
   isOver: (s) => s.phase === "over",
   results: (s) =>
     s.players
