@@ -179,7 +179,7 @@ function timeline(...steps: [at: number, input: NoticeInput][]): [number, RoomNo
   return told;
 }
 
-describe("trackNotice (held notices)", () => {
+describe("trackNotice (held TV notices, immediate host notices)", () => {
   const screen = (over: Partial<RoomSnapshot> = {}) => input({ room: snap(over) });
   const phones = (over: Partial<RoomSnapshot> = {}) => input({ room: snap({ mode: "phones", ...over }) });
   const tvHost = [{ id: "s1", connected: true, isHost: true }];
@@ -206,43 +206,74 @@ describe("trackNotice (held notices)", () => {
   });
 
   it("doesn't extend the hold for further changes while one is pending", () => {
-    expect(timeline([0, screen()], [1000, phones()], [2000, phones({ belowMin: true })]))
-      .toEqual([[1000 + NOTICE_HOLD_MS, "tv-lost"]]);
+    // The host change at 2000 raises its own notice (told at once) and doesn't push the TV notice back.
+    expect(timeline([0, screen()], [1000, phones()], [2000, phones({ hostId: "p1" })])).toEqual([
+      [2000, "host"],
+      [1000 + NOTICE_HOLD_MS, "tv-lost"],
+    ]);
   });
 
   it("starts a fresh hold after a change is undone, so a later quick drop isn't told early", () => {
     expect(timeline([0, screen()], [1000, phones()], [2000, screen()], [3900, phones()], [4100, screen()])).toEqual([]);
   });
 
-  it("says nothing when host bounces TV → you → TV within the hold", () => {
+  it("tells you're the host at once", () => {
+    expect(timeline([0, phones()], [1000, phones({ hostId: "p1" })])).toEqual([[1000, "host"]]);
+  });
+
+  it("tells someone else took host from you at once", () => {
+    expect(timeline([0, phones({ hostId: "p1" })], [1000, phones({ hostId: "p2" })])).toEqual([[1000, "host-player"]]);
+  });
+
+  it("tells every host change at once, even a quick bounce", () => {
+    expect(timeline([0, phones()], [500, phones({ hostId: "p1" })], [2000, phones({ hostId: "p2" })])).toEqual([
+      [500, "host"],
+      [2000, "host-player"],
+    ]);
+  });
+
+  it("tells you're the host at once and TV disconnected after the hold when both change together", () => {
+    expect(timeline([0, screen()], [1000, phones({ hostId: "p1" })])).toEqual([
+      [1000, "host"],
+      [1000 + NOTICE_HOLD_MS, "tv-lost"],
+    ]);
+  });
+
+  it("on a quick TV reload tells only the host changes: you're the host, then the TV is the host again", () => {
     expect(timeline(
       [0, screen({ hostId: "s1", screens: tvHost })],
       [1000, phones({ hostId: "p1" })],
       [2500, screen({ hostId: "s1", screens: tvHost })],
-    )).toEqual([]);
+    )).toEqual([[1000, "host"], [2500, "host-tv"]]);
   });
 
-  it("says nothing when host passes to you and on to someone else within the hold", () => {
-    expect(timeline([0, phones()], [500, phones({ hostId: "p1" })], [2000, phones({ hostId: "p2" })])).toEqual([]);
-  });
-
-  it("tells you're the host after the hold, preferring it over TV disconnected", () => {
-    expect(timeline([0, screen()], [1000, phones({ hostId: "p1" })])).toEqual([[1000 + NOTICE_HOLD_MS, "host"]]);
-  });
-
-  it("tells the net change when the TV goes and then host passes to you within the hold", () => {
-    expect(timeline([0, screen()], [1000, phones()], [2000, phones({ hostId: "p1" })]))
-      .toEqual([[1000 + NOTICE_HOLD_MS, "host"]]);
-  });
-
-  it("tells the TV is the host again only once it has held", () => {
-    expect(timeline([0, phones({ hostId: "p1" })], [1000, screen({ hostId: "s1", screens: tvHost })]))
-      .toEqual([[1000 + NOTICE_HOLD_MS, "host-tv"]]);
+  it("lets the TV is the host again stand for TV reconnected, so it isn't told twice", () => {
     expect(timeline(
       [0, phones({ hostId: "p1" })],
       [1000, screen({ hostId: "s1", screens: tvHost })],
-      [2000, phones({ hostId: "p1" })],
-    )).toEqual([]);
+    )).toEqual([[1000, "host-tv"]]);
+    // Also when the TV came back (TV reconnected pending) before reclaiming host.
+    expect(timeline(
+      [0, phones({ hostId: "p1" })],
+      [1000, screen({ hostId: "p1" })],
+      [2000, screen({ hostId: "s1", screens: tvHost })],
+    )).toEqual([[2000, "host-tv"]]);
+  });
+
+  it("still tells TV reconnected to the other phones when the TV returns and reclaims host", () => {
+    expect(timeline([0, phones({ hostId: "p2" })], [1000, screen({ hostId: "s1", screens: tvHost })]))
+      .toEqual([[1000 + NOTICE_HOLD_MS, "tv-back"]]);
+  });
+
+  it("prefers a host notice over a TV notice that falls due on the same update, absorbing the TV change", () => {
+    let t: NoticeTracker = NO_NOTICES;
+    t = trackNotice(t, screen(), 0).tracker;
+    t = trackNotice(t, phones(), 1000).tracker;
+    // The timer slipped: the next thing seen is a host change after the TV notice was due.
+    const r = trackNotice(t, phones({ hostId: "p1" }), 1000 + NOTICE_HOLD_MS + 50);
+    expect(r.notice).toBe("host");
+    expect(r.tracker.due).toBeNull();
+    expect(trackNotice(r.tracker, phones({ hostId: "p1" }), 10_000).notice).toBeNull();
   });
 
   it("drops a pending notice when the game ends, the socket drops or the session changes", () => {
@@ -251,6 +282,10 @@ describe("trackNotice (held notices)", () => {
       .toEqual([]);
     expect(timeline([0, screen()], [1000, phones()], [2000, input({ session: 2, room: snap({ mode: "phones" }) })]))
       .toEqual([]);
+  });
+
+  it("says nothing for host changes outside a game", () => {
+    expect(timeline([0, phones({ phase: "lobby" })], [1000, phones({ phase: "lobby", hostId: "p1" })])).toEqual([]);
   });
 
   it("says nothing on the first snapshot of a session", () => {

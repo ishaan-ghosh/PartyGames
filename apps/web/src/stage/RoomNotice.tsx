@@ -5,8 +5,8 @@ import { NO_NOTICES, noticeText, trackNotice, type NoticeInput, type NoticeTrack
 const NOTICE_MS = 4500;
 
 /**
- * Player phones: a brief notice when the TV drops or returns mid-game, or host passes to or from you,
- * once the change has held for NOTICE_HOLD_MS (see trackNotice).
+ * Player phones: a brief notice when host passes to or from you mid-game (at once), or the TV drops or
+ * returns mid-game (once that has held for NOTICE_HOLD_MS, so a quick TV reload is silent; see trackNotice).
  * Returns the current notice text (null when none) and a dismiss callback.
  */
 export function useRoomNotice(r: RoomConnection): { text: string | null; dismiss(): void } {
@@ -17,12 +17,13 @@ export function useRoomNotice(r: RoomConnection): { text: string | null; dismiss
   // Players only: a screen never needs to be told the TV left.
   const youId = r.you?.kind === "player" ? r.you.id : null;
 
-  // Feeds an observation to the tracker and (re)arms the timer for a held notice, which re-checks
-  // the latest room once the hold ends: a quick TV reload or host bounce is never told.
+  // Feeds an observation to the tracker and (re)arms the timer for a held TV notice, which re-checks
+  // the latest room once the hold ends: a quick TV reload is never told.
   const step = useCallback((input: NoticeInput) => {
     if (timer.current !== null) window.clearTimeout(timer.current);
     timer.current = null;
-    const now = Date.now();
+    // Monotonic, so a wall-clock jump can't fire or stall a held notice.
+    const now = performance.now();
     const next = trackNotice(tracker.current, input, now);
     tracker.current = next.tracker;
     if (next.notice) {
