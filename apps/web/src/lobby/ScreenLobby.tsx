@@ -1,7 +1,9 @@
 import type { HostCommand, RoomSnapshot } from "@party/shared";
 import { PlayerChip, playSound } from "@party/ui";
 import { QRCodeSVG } from "qrcode.react";
-import { Fragment, lazy, Suspense, useEffect, useRef } from "react";
+import { Fragment, lazy, Suspense, useEffect, useRef, useState } from "react";
+import { kickablePlayers, pendingKick } from "../kick/kick";
+import { KickChipButton, KickConfirmDialog } from "../kick/KickDialogs";
 import { ErrorBoundary } from "../lib/ErrorBoundary";
 import { publicOrigin } from "../lib/origin";
 import { hasWebGL } from "../lib/webgl";
@@ -14,8 +16,9 @@ const reducedMotion = () => window.matchMedia?.("(prefers-reduced-motion: reduce
 let webgl: boolean | undefined;
 const showBackground = () => !reducedMotion() && (webgl ??= hasWebGL());
 
-export function ScreenLobby({ room, isHost, online, sendHost }: {
+export function ScreenLobby({ room, youId, isHost, online, sendHost }: {
   room: RoomSnapshot;
+  youId: string;
   isHost: boolean;
   online: boolean;
   sendHost(cmd: HostCommand): void;
@@ -27,6 +30,12 @@ export function ScreenLobby({ room, isHost, online, sendHost }: {
     if (count > prev.current) playSound("join");
     prev.current = count;
   }, [count]);
+  // Host only: tapping a player's chip asks to kick them. The list updates from the server's snapshot.
+  const kickable = kickablePlayers(room, youId);
+  const [kickId, setKickId] = useState<string | null>(null);
+  const { target: kickTarget, stale: staleKick } = pendingKick(kickable, kickId);
+  // The target left or we stopped being host: drop the pending confirm so it can't come back later.
+  if (staleKick) setKickId(null);
 
   return (
     <div className="lobby-screen">
@@ -51,8 +60,8 @@ export function ScreenLobby({ room, isHost, online, sendHost }: {
       <section className="players-panel">
         <h2>{count ? `${count} player${count === 1 ? "" : "s"} in` : "Waiting for players…"}</h2>
         <div className="players-grid">
-          {room.players.map((p) => (
-            <Fragment key={p.id}>
+          {room.players.map((p) => {
+            const chip = (
               <PlayerChip
                 data-testid="lobby-player"
                 size="lg"
@@ -61,10 +70,27 @@ export function ScreenLobby({ room, isHost, online, sendHost }: {
                 dim={!p.connected}
                 badge={p.isHost ? "host" : undefined}
               />
-              {!p.connected && <span className="sr-only">(offline)</span>}
-            </Fragment>
-          ))}
+            );
+            return (
+              <Fragment key={p.id}>
+                {kickable.some((k) => k.id === p.id) ? (
+                  <KickChipButton player={p} onClick={() => setKickId(p.id)}>{chip}</KickChipButton>
+                ) : (
+                  chip
+                )}
+                {!p.connected && <span className="sr-only">(offline)</span>}
+              </Fragment>
+            );
+          })}
         </div>
+        {kickTarget && (
+          <KickConfirmDialog
+            player={kickTarget}
+            online={online}
+            onKick={(playerId) => sendHost({ cmd: "kick", playerId })}
+            onClose={() => setKickId(null)}
+          />
+        )}
         {isHost ? (
           <HostPanel room={room} sendHost={sendHost} online={online} />
         ) : (

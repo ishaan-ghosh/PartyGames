@@ -1,0 +1,33 @@
+/* Host kick UI: tappable lobby chips and the confirm / players dialogs. */
+
+/* A bare wrapper: the chip inside keeps its exact size and look; only focus and press feedback are added. */
+.chip-button { appearance: none; border: 0; padding: 0; margin: 0; background: none; color: inherit; font: inherit; text-align: inherit; border-radius: 999px; cursor: pointer; display: inline-flex; -webkit-tap-highlight-color: transparent; transition: transform 0.15s var(--ease-spring); }
+.chip-button:focus-visible { outline: 3px solid var(--focus); outline-offset: 3px; }
+.chip-button:active { transform: scale(0.96); }
+@media (hover: hover) { .chip-button:hover .chip { box-shadow: inset 0 0 0 2px var(--bad); } }
+
+.modal { padding: 0; border: 0; background: transparent; color: var(--text); max-width: min(92vw, 480px); width: 100%; max-height: 90dvh; overflow: visible; }
+.modal::backdrop { background: rgba(10, 9, 17, 0.72); }
+.modal-body { display: grid; gap: var(--space-4); max-height: 90dvh; overflow-y: auto; overscroll-behavior: contain; }
+.modal-title { font: 600 1.6rem var(--font-display); }
+.modal-text { color: var(--text-dim); font-size: 1.05rem; }
+.modal-actions { display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-3); }
+.modal-head { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); }
+.modal-head .btn { min-width: 48px; padding: 0; font-size: 1.3rem; }
+
+.kick-list { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--space-2); }
+.kick-list li { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); }
+.kick-list .chip { min-width: 0; }
+.kick-list .chip-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.kick-list .btn { flex: none; }
+
+/* TV: read from the sofa. */
+.screen-view .modal { max-width: min(90vw, 640px); }
+.screen-view .modal-body { padding: var(--space-6); gap: var(--space-5); }
+.screen-view .modal-title { font-size: clamp(2rem, 3vw, 2.8rem); }
+.screen-view .modal-text { font-size: clamp(1.2rem, 1.6vw, 1.5rem); }
+.screen-view .modal .btn-lg { min-height: 64px; font-size: 1.4rem; }
+.screen-view .kick-list .chip { padding: 8px 20px 8px 8px; font-size: 1.25rem; }
+.screen-view .kick-list .chip-avatar { width: 52px; height: 52px; font-size: 1.8rem; }
+.screen-view .kick-list .btn { min-height: 56px; font-size: 1.2rem; }
+.kick-hint { color: var(--text-dim); font-size: 0.9rem; margin-top: calc(-1 * var(--space-2)); }

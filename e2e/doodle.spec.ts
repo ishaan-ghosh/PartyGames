@@ -88,3 +88,43 @@ test("phones-only: the host starts from a phone and guessers see the canvas", as
   await expect(host.getByTestId("word-choice")).toHaveCount(3);
   await expect(guest.getByTestId("phone-canvas")).toBeVisible();
 });
+
+test("the host kicks players from the lobby and during a game", async ({ browser }) => {
+  const screen = await (await browser.newContext({ viewport: { width: 1280, height: 720 } })).newPage();
+  await screen.goto("/");
+  await screen.getByTestId("host-screen").click();
+  const code = (await screen.getByTestId("room-code").innerText()).trim();
+
+  const ana = await joinPhone(browser, code, "Ana");
+  const ben = await joinPhone(browser, code, "Ben");
+  const cy = await joinPhone(browser, code, "Cy");
+  await expect(screen.getByTestId("lobby-player")).toHaveCount(3);
+  // Only the host can kick: a guest's chips aren't buttons. Wait for Ana's lobby to list everyone
+  // first, so the no-kick-button check isn't passing on a not-yet-rendered list.
+  await expect(ana.getByTestId("lobby-player")).toHaveCount(3);
+  await expect(ana.getByTestId("kick-Ben")).toHaveCount(0);
+
+  // Lobby: tapping a chip asks first; Escape cancels and returns focus to the chip.
+  await screen.getByTestId("kick-Cy").click();
+  const confirm = screen.getByRole("dialog", { name: "Kick Cy?" });
+  await expect(confirm).toBeVisible();
+  await screen.keyboard.press("Escape");
+  await expect(confirm).toHaveCount(0);
+  await expect(screen.getByTestId("kick-Cy")).toBeFocused();
+
+  await screen.getByTestId("kick-Cy").click();
+  await screen.getByTestId("kick-confirm").click();
+  await expect(screen.getByTestId("lobby-player")).toHaveCount(2);
+  await expect(ana.getByTestId("lobby-player")).toHaveCount(2);
+  await expect(cy.getByText("You were removed from the room.")).toBeVisible();
+
+  // In game: the host bar's Players dialog.
+  await screen.getByTestId("start-game").click();
+  await expect(ana.getByTestId("word-choice")).toHaveCount(3);
+  await screen.getByTestId("host-players").click();
+  await expect(screen.getByRole("dialog", { name: "Players" })).toBeVisible();
+  await screen.getByTestId("kick-Ben").click();
+  await screen.getByTestId("kick-confirm").click();
+  await expect(ben.getByText("You were removed from the room.")).toBeVisible();
+  await expect(screen.getByTestId("kick-Ben")).toHaveCount(0);
+});
