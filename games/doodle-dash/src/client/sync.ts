@@ -10,12 +10,18 @@ export const QUIET_MS = 2500;
 
 /**
  * Live ops reach useStrokes synchronously, but a view only after a React render, so ops can arrive
- * before the view they follow. Every received op is buffered (bounded by time and count), including
- * ones rejected as stale, and replayed on top of each adopted view. That makes adopting a view that
- * is behind the local seq safe, whether live ops overtook it or the server restarted from an older save.
+ * before the view they follow. Received ops are buffered (bounded by time and count), including ones
+ * rejected as stale, and the recent ones are replayed on top of each adopted view. That makes adopting
+ * a view behind the local seq safe, whether live ops overtook it or the server restarted.
  */
 export const BUFFER_MS = 5000;
 export const BUFFER_MAX = 500;
+/**
+ * Only ops received this recently are replayed. The render race lasts milliseconds, while a reconnect
+ * to a restarted server takes at least PartySocket's 3 s minimum delay, so pre-restart ops (ghosts on
+ * the restored view) are never replayed.
+ */
+export const REPLAY_MS = 1000;
 
 export interface BufferedOp {
   op: StrokeOp;
@@ -23,40 +29,48 @@ export interface BufferedOp {
   at: number;
 }
 
-/** Highest op seq applied locally, plus the recently received ops. */
+/** Highest op seq applied locally, the recently received ops, and whether an op was applied after a gap. */
 export interface LiveSeq {
   seq: number;
   buffer: BufferedOp[];
+  /** The local list may be wrong (an op was applied after a gap): adopt the next view regardless. */
+  dirty: boolean;
 }
 
 /**
- * Buffers a live op and reports whether to apply it now: only the next op in sequence applies.
- * Duplicates and stale ops are ignored; an op after a gap waits for the next view to resync.
+ * Buffers a live op and reports whether to apply it. Duplicates and stale ops are ignored. An op after
+ * a gap (e.g. ops missed before subscribing) is applied best-effort and marks the list dirty, so the
+ * canvas keeps moving and the next view resyncs it.
  */
 export function receiveOp(live: LiveSeq, op: StrokeOp, now: number): boolean {
   live.buffer = live.buffer.filter((b) => now - b.at <= BUFFER_MS);
   live.buffer.push({ op, at: now });
   if (live.buffer.length > BUFFER_MAX) live.buffer.splice(0, live.buffer.length - BUFFER_MAX);
-  if (op.seq !== live.seq + 1) return false;
+  if (op.seq <= live.seq) return false;
+  if (op.seq !== live.seq + 1) live.dirty = true;
   live.seq = op.seq;
   return true;
 }
 
-/**
- * The stroke list for an adopted view: its strokes plus buffered ops continuing its seq without gaps
- * (the most recently received op wins if a seq repeats). Sets the local seq to the last one applied.
- */
-export function adoptView(live: LiveSeq, viewStrokes: readonly Stroke[], viewOpSeq: number): Stroke[] {
+/** A view's strokes plus the recent buffered ops continuing its seq without gaps (latest op wins per seq). */
+function replay(live: LiveSeq, viewStrokes: readonly Stroke[], viewOpSeq: number, now: number): { strokes: Stroke[]; seq: number } {
   const bySeq = new Map<number, StrokeOp>();
-  for (const b of live.buffer) bySeq.set(b.op.seq, b.op);
+  for (const b of live.buffer) if (now - b.at <= REPLAY_MS) bySeq.set(b.op.seq, b.op);
   let strokes = [...viewStrokes];
   let seq = viewOpSeq;
   for (let op = bySeq.get(seq + 1); op; op = bySeq.get(seq + 1)) {
     strokes = applyOp(strokes, op);
     seq = op.seq;
   }
-  live.seq = seq;
-  return strokes;
+  return { strokes, seq };
+}
+
+/** Adopts a view: returns its strokes plus replayed ops, and sets the local seq to the last one applied. */
+export function adoptView(live: LiveSeq, viewStrokes: readonly Stroke[], viewOpSeq: number, now: number): Stroke[] {
+  const r = replay(live, viewStrokes, viewOpSeq, now);
+  live.seq = r.seq;
+  live.dirty = false;
+  return r.strokes;
 }
 
 export interface SyncInput {
@@ -98,4 +112,19 @@ export function shouldAdoptView(i: SyncInput): boolean {
   // outbox dropped actions during a reconnect or the server refused ink past its limit.
   if (i.drawing || i.pendingPoints > 0 || i.msSinceLastSend < QUIET_MS) return false;
   return signature(i.viewStrokes) !== signature(i.localStrokes);
+}
+
+/**
+ * Handles an incoming view: the stroke list to set, or null to keep the local one. A dirty list always
+ * adopts. A viewer keeps its list when the replayed result matches it (same seq and shape), so a view
+ * merely overtaken by live ops doesn't hand the renderer new objects and force a full redraw.
+ */
+export function syncView(live: LiveSeq, i: SyncInput, now: number): Stroke[] | null {
+  if (live.dirty) return adoptView(live, i.viewStrokes, i.viewOpSeq, now);
+  if (!shouldAdoptView(i)) return null;
+  if (!i.ownsCanvas && !i.turnChanged) {
+    const r = replay(live, i.viewStrokes, i.viewOpSeq, now);
+    if (r.seq === i.localSeq && signature(r.strokes) === signature(i.localStrokes)) return null;
+  }
+  return adoptView(live, i.viewStrokes, i.viewOpSeq, now);
 }
