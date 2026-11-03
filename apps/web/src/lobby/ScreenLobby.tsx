@@ -38,7 +38,7 @@ export function ScreenLobby({ room, youId, isHost, online, sendHost }: {
   if (staleKick) setKickId(null);
 
   return (
-    <div className="lobby-screen">
+    <div className={`lobby-screen${room.lastResults ? " has-results" : ""}`}>
       {showBackground() && (
         // Decorative: a failed chunk load (stale deploy) or a Canvas error must not blank the TV.
         <ErrorBoundary>
