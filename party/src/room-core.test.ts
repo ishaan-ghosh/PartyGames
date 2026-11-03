@@ -206,10 +206,10 @@ describe("RoomCore: host commands and games", () => {
     expect(h.last("c2", "view")!.payload).toMatchObject({ count: 1 });
   });
 
-  it("relays quiet events to everyone but the sender without persisting", () => {
+  it("relays quiet events to everyone but the sender without persisting at once (marked dirty instead)", () => {
     const h = started();
     const viewsBefore = h.msgs("c2", "view").length;
-    expect(h.core.message("c1", { type: "action", payload: { t: "ping" } }, 1)).toEqual({ persist: false });
+    expect(h.core.message("c1", { type: "action", payload: { t: "ping" } }, 1)).toEqual({ persist: false, dirty: true });
     expect(h.last("c2", "event")?.payload).toBe("pong");
     expect(h.last("s1", "event")?.payload).toBe("pong");
     expect(h.last("c1", "event")).toBeUndefined();
@@ -389,6 +389,47 @@ describe("RoomCore: host handoff and lifetime", () => {
     restored.message("n1", { type: "hello", role: "player", token }, 6000);
     expect(sent2.find((s) => s.to === "n1" && s.msg.type === "welcome")).toMatchObject({ msg: { you: { id: h.id("c1") } } });
     expect(sent2.filter((s) => s.to === "n1" && s.msg.type === "view").at(-1)?.msg).toMatchObject({ payload: { count: 1 } });
+  });
+
+  it("after hibernation, keeps members whose sockets are still open connected and changes nothing", () => {
+    const h = started();
+    h.core.message("c1", { type: "action", payload: { t: "inc" } }, 1);
+    const saved = h.core.serialize();
+    const sent2: { to: string; msg: ServerMsg }[] = [];
+    const out2: Outbox = { send: (to, msg) => sent2.push({ to, msg }), close: () => {} };
+    const woken = new RoomCore("ABCD", h.deps, out2, { saved, now: 5000, live: new Set(["s1", "c1", "c2"]) });
+    expect(woken.restoreChanged).toBe(false);
+    expect(woken.serialize()).toEqual(saved);
+    // The same sockets carry on without a new hello.
+    expect(woken.message("c1", { type: "action", payload: { t: "inc" } }, 6000)).toEqual({ persist: true });
+    expect(sent2.filter((s) => s.to === "c2" && s.msg.type === "view").at(-1)?.msg).toMatchObject({ payload: { count: 2 } });
+    expect(woken.snapshot().players.every((p) => p.connected)).toBe(true);
+  });
+
+  it("after hibernation, marks only members whose sockets closed meanwhile as gone", () => {
+    const h = started();
+    const saved = h.core.serialize();
+    const out2: Outbox = { send: () => {}, close: () => {} };
+    const woken = new RoomCore("ABCD", h.deps, out2, { saved, now: 5000, live: new Set(["s1", "c1"]) });
+    expect(woken.restoreChanged).toBe(true);
+    const s = woken.serialize();
+    expect(s.members.find((m) => m.id === h.id("c2"))).toMatchObject({ connId: null, disconnectedAt: 5000 });
+    expect(s.members.find((m) => m.id === h.id("c1"))).toMatchObject({ connId: "c1", disconnectedAt: null });
+    expect((s.gameState as CState).presence).toEqual({ [h.id("c2")]: false });
+    expect(s.emptySince).toBeNull();
+    // A socket that is open but unknown to the save (it never said hello) binds nobody.
+    const other = new RoomCore("ABCD", h.deps, out2, { saved, now: 5000, live: new Set(["zz"]) });
+    expect(other.snapshot().players.some((p) => p.connected)).toBe(false);
+    expect(other.serialize().emptySince).toBe(5000);
+  });
+
+  it("asks for a save on tick only when something may have changed", () => {
+    const l = lobby();
+    expect(l.core.tick(5_000)).toEqual({ persist: false }); // idle lobby watchdog
+    l.core.disconnect("s1", 6_000);
+    expect(l.core.tick(6_000 + LIMITS.hostGraceMs)).toEqual({ persist: true }); // host handed over
+    const g = started();
+    expect(g.core.tick(10)).toEqual({ persist: true }); // game timers may change hidden state
   });
 
   it("falls back to the default game in the lobby when the saved game isn't registered", () => {

@@ -5,29 +5,51 @@ import { ROOM_KEY, SavePlanner, getBatched, partKey } from "./save-plan";
 const saved = { v: 1 } as unknown as SavedRoom;
 const parts = (revs: Record<string, string>) =>
   Object.fromEntries(Object.entries(revs).map(([k, rev]) => [k, { rev, value: `${k}@${rev}` }]));
+/** The room record as written: the saved room plus the revs of the parts written beside it. */
+const room = (partRevs?: Record<string, string>) => (partRevs ? { ...saved, partRevs } : saved);
 
 describe("SavePlanner", () => {
   it("writes the room every time and a part only when its rev changes", () => {
     const p = new SavePlanner();
     expect(p.plan({ saved, parts: parts({ a: "1", b: "1" }) })).toEqual({
-      put: { [ROOM_KEY]: saved, [partKey("a")]: "a@1", [partKey("b")]: "b@1" },
+      put: { [ROOM_KEY]: room({ a: "1", b: "1" }), [partKey("a")]: "a@1", [partKey("b")]: "b@1" },
       del: [],
     });
-    expect(p.plan({ saved, parts: parts({ a: "1", b: "1" }) })).toEqual({ put: { [ROOM_KEY]: saved }, del: [] });
-    expect(p.plan({ saved, parts: parts({ a: "1", b: "2" }) })).toEqual({ put: { [ROOM_KEY]: saved, [partKey("b")]: "b@2" }, del: [] });
+    expect(p.plan({ saved, parts: parts({ a: "1", b: "1" }) })).toEqual({ put: { [ROOM_KEY]: room({ a: "1", b: "1" }) }, del: [] });
+    expect(p.plan({ saved, parts: parts({ a: "1", b: "2" }) })).toEqual({
+      put: { [ROOM_KEY]: room({ a: "1", b: "2" }), [partKey("b")]: "b@2" },
+      del: [],
+    });
   });
 
   it("deletes parts that are gone", () => {
     const p = new SavePlanner();
     p.plan({ saved, parts: parts({ a: "1", b: "1" }) });
-    expect(p.plan({ saved, parts: parts({ a: "1" }) })).toEqual({ put: { [ROOM_KEY]: saved }, del: [partKey("b")] });
-    expect(p.plan({ saved, parts: {} }).del).toEqual([partKey("a")]);
+    expect(p.plan({ saved, parts: parts({ a: "1" }) })).toEqual({ put: { [ROOM_KEY]: room({ a: "1" }) }, del: [partKey("b")] });
+    expect(p.plan({ saved, parts: {} })).toEqual({ put: { [ROOM_KEY]: room() }, del: [partKey("a")] });
   });
 
-  it("after a wake, rewrites restored parts once and deletes the ones no longer present", () => {
+  it("after a wake without known revs (older saves), rewrites restored parts once and deletes the ones no longer present", () => {
     const p = new SavePlanner();
     p.restored(["a", "b"]);
-    expect(p.plan({ saved, parts: parts({ a: "1" }) })).toEqual({ put: { [ROOM_KEY]: saved, [partKey("a")]: "a@1" }, del: [partKey("b")] });
+    expect(p.plan({ saved, parts: parts({ a: "1" }) })).toEqual({ put: { [ROOM_KEY]: room({ a: "1" }), [partKey("a")]: "a@1" }, del: [partKey("b")] });
+  });
+
+  it("after a wake with the revs from the room record, rewrites only parts that changed since", () => {
+    const p = new SavePlanner();
+    p.restored(["a", "b", "c"], { a: "1", b: "1", c: 7, constructor: "x" });
+    expect(p.plan({ saved, parts: parts({ a: "1", b: "2", c: "7" }) })).toEqual({
+      put: { [ROOM_KEY]: room({ a: "1", b: "2", c: "7" }), [partKey("b")]: "b@2", [partKey("c")]: "c@7" },
+      del: [],
+    });
+  });
+
+  it("round-trips: the revs it writes into the room record are the ones restored() takes", () => {
+    const p = new SavePlanner();
+    const first = p.plan({ saved, parts: parts({ a: "1", b: "1" }) });
+    const woken = new SavePlanner();
+    woken.restored(["a", "b"], (first.put[ROOM_KEY] as { partRevs: Record<string, string> }).partRevs);
+    expect(woken.plan({ saved, parts: parts({ a: "1", b: "1" }) })).toEqual({ put: { [ROOM_KEY]: room({ a: "1", b: "1" }) }, del: [] });
   });
 
   it("writes everything again after a reset (storage wiped)", () => {
