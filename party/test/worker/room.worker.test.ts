@@ -75,4 +75,14 @@ describe("worker", () => {
     ws.send(JSON.stringify({ type: "hello", role: "player", name: "Ana", hostKey: "mine" }));
     await vi.waitFor(() => expect(messages[0]).toMatchObject({ type: "error", code: "ROOM_NOT_FOUND" }));
   });
+
+  it("404s room routes whose name isn't a room code, without reaching a Durable Object", async () => {
+    for (const name of ["abcd", "ABCO", "ABCDE", "ABC", "constructor", "AB%20D", "anything-at-all"]) {
+      const res = await SELF.fetch(`https://party.test/parties/room/${name}`, { headers: { Upgrade: "websocket" } });
+      expect(res.status, name).toBe(404);
+      expect(res.webSocket, name).toBeNull();
+    }
+    const other = await SELF.fetch("https://party.test/parties/other/ABCD", { headers: { Upgrade: "websocket" } });
+    expect(other.status).toBe(404);
+  });
 });
