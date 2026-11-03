@@ -241,7 +241,7 @@ mixed into the pool).
 2. A screen host shows the room code, a QR code (to `/room/:code`), and the players as they arrive.
 3. Players enter a nickname and pick a color or emoji avatar.
 4. In phones-only mode, the creating phone is the host and can show the code and QR on demand.
-5. The host picks a game from the **game library**: Doodle Dash, plus "coming soon" cards for future games.
+5. The host picks a game from the **game library**: the library shows one card per playable game (no "coming soon" cards).
 
 ### Sound
 
