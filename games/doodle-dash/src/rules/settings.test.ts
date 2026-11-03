@@ -24,14 +24,21 @@ describe("settings", () => {
     const many = Array.from({ length: 300 }, (_, i) => `w${i}`);
     expect(parseSettings({ addCustomWords: many }, prev).customWords).toHaveLength(200);
   });
-  it("shows custom words only to a host on a phone; others get the count", () => {
+  it("shows custom words only to a host on a phone in the lobby; others get the count", () => {
     const s = { ...defaultSettings, customWords: ["kite", "moon"] };
-    expect(publicSettings(s, { isHost: true, kind: "player" })).toEqual(s);
+    const phase = "lobby" as const;
+    expect(publicSettings(s, { isHost: true, kind: "player", phase })).toEqual(s);
     const hidden = { rounds: s.rounds, drawTime: s.drawTime, difficulty: s.difficulty, customWordCount: 2 };
-    expect(publicSettings(s, { isHost: false, kind: "player" })).toEqual(hidden);
-    expect(publicSettings(s, { isHost: true, kind: "screen" })).toEqual(hidden); // the TV is in view of everyone
-    expect(publicSettings(s, { isHost: false, kind: "screen" })).toEqual(hidden);
+    expect(publicSettings(s, { isHost: false, kind: "player", phase })).toEqual(hidden);
+    expect(publicSettings(s, { isHost: true, kind: "screen", phase })).toEqual(hidden); // the TV is in view of everyone
+    expect(publicSettings(s, { isHost: false, kind: "screen", phase })).toEqual(hidden);
     expect(doodleDash.publicSettings).toBe(publicSettings);
+  });
+  it("hides custom words from the host phone during play (the host may be a guesser)", () => {
+    const s = { ...defaultSettings, customWords: ["kite", "moon"] };
+    const hidden = { rounds: s.rounds, drawTime: s.drawTime, difficulty: s.difficulty, customWordCount: 2 };
+    expect(publicSettings(s, { isHost: true, kind: "player", phase: "playing" })).toEqual(hidden);
+    expect(publicSettings(s, { isHost: true, kind: "screen", phase: "playing" })).toEqual(hidden);
   });
   it("mixes custom words into the chosen difficulty", () => {
     const pool = wordPool({ ...defaultSettings, difficulty: "easy", customWords: ["Grandma's lasagna", "Apple"] });

@@ -164,6 +164,38 @@ describe("room lifecycle", () => {
     ws.close();
   });
 
+  it("restores a drawing saved in more parts than one storage read can fetch (128 keys)", async () => {
+    const { code } = await createRoom();
+    const core = new RoomCore(code, { newId: () => crypto.randomUUID(), newSeed: () => 1, games, defaultGameId: DEFAULT_GAME_ID }, { send: () => {}, close: () => {} });
+    core.create("k", Date.now());
+    core.message("x1", { type: "hello", role: "player", name: "Ana", hostKey: "k" }, Date.now());
+    core.message("x2", { type: "hello", role: "player", name: "Ben" }, Date.now());
+    core.message("x1", { type: "host", cmd: { cmd: "start" } }, Date.now());
+    for (const c of ["x1", "x2"]) core.message(c, { type: "action", payload: { t: "choose", index: 0 } }, Date.now());
+    const total = 130 * 32 + 5; // 131 parts
+    for (let i = 0; i < total; i++) {
+      for (const c of ["x1", "x2"]) {
+        core.message(c, { type: "action", payload: { t: "strokeBegin", id: i, tool: "pen", color: 0, size: 0, points: [0.1, 0.1, 0.2, 0.2] } }, Date.now());
+      }
+    }
+    const { saved, parts } = core.serializeSplit();
+    expect(saved.parts!.length).toBeGreaterThan(128);
+    const token = saved.members[0]!.token;
+    await runInDurableObject(stubFor(code), async (_room, state) => {
+      const entries = [["room", saved], ...Object.entries(parts).map(([k, p]) => [`part:${k}`, p.value])];
+      for (let i = 0; i < entries.length; i += 128) await state.storage.put(Object.fromEntries(entries.slice(i, i + 128)));
+      await state.storage.deleteAlarm();
+    });
+    await evictDurableObject(stubFor(code), { webSockets: "close" });
+    const { ws, messages } = await open(code);
+    ws.send(JSON.stringify({ type: "hello", role: "player", token }));
+    await vi.waitFor(() => expect(messages.some((m) => m.type === "event")).toBe(true));
+    const sync = messages.find((m) => m.type === "event")!.payload as { op: string; strokes: unknown[] };
+    expect(sync.op).toBe("sync");
+    expect(sync.strokes).toHaveLength(total);
+    ws.close();
+  });
+
   it("leaves no storage behind when someone touches a code that was never created", async () => {
     const { ws, messages } = await open("WXYZ");
     ws.send(JSON.stringify({ type: "hello", role: "player", name: "Ana" }));

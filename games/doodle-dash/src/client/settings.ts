@@ -5,7 +5,7 @@ export function wordsHidden(s: DoodleSettings | PublicDoodleSettings): s is Publ
   return !Array.isArray((s as Partial<DoodleSettings>).customWords);
 }
 
-export const splitWords =(text: string): string[] => text.split(",").map((w) => w.trim()).filter(Boolean);
+export const splitWords = (text: string): string[] => text.split(",").map((w) => w.trim()).filter(Boolean);
 
 const sameWords = (text: string, list: readonly string[]) =>
   splitWords(text).join("|").toLowerCase() === list.join("|").toLowerCase();

@@ -3,9 +3,9 @@ import { Server, type Connection, type WSMessage } from "partyserver";
 import type { Env } from "./env";
 import { DEFAULT_GAME_ID, games } from "./games";
 import { RoomCore, type SavedRoom } from "./room-core";
-import { ROOM_KEY, SavePlanner, partKey } from "./save-plan";
+import { ROOM_KEY, SavePlanner, getBatched, partKey } from "./save-plan";
 
-/** Durable Object storage takes at most 128 keys per put call. */
+/** Durable Object storage takes at most 128 keys per get or put call. */
 const PUT_BATCH = 128;
 /** Largest client frame we will parse. A full 400-number stroke batch is about 8 KB of JSON. */
 export const MAX_FRAME_BYTES = 16 * 1024;
@@ -27,7 +27,7 @@ export class Room extends Server<Env> {
   async onStart() {
     const saved = await this.ctx.storage.get<SavedRoom>(ROOM_KEY);
     const names = saved?.parts ?? [];
-    const stored = names.length ? await this.ctx.storage.get(names.map(partKey)) : new Map<string, unknown>();
+    const stored = await getBatched((keys) => this.ctx.storage.get(keys), names.map(partKey), PUT_BATCH);
     this.planner.restored(names);
     this.core = this.makeCore(saved, Object.fromEntries(names.map((n) => [n, stored.get(partKey(n))])));
     if (!saved) {

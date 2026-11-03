@@ -11,12 +11,17 @@ function clampInt(v: unknown, min: number, max: number, fallback: number): numbe
 
 /**
  * What a connection sees of the settings. Custom words are the host's secret: only a host on a phone
- * gets them (to edit); everyone else, the TV included even when it is the host, gets their count.
+ * gets them, and only outside play (to edit in the lobby); everyone else, the TV included even when it
+ * is the host, gets their count. During play the host phone gets the count too: the host can pass to a
+ * phone that is guessing, and the words would give away what is being drawn.
  */
 export type PublicDoodleSettings = Omit<DoodleSettings, "customWords"> & { customWordCount: number };
 
-export function publicSettings(s: DoodleSettings, to: { isHost: boolean; kind: "screen" | "player" }): DoodleSettings | PublicDoodleSettings {
-  if (to.isHost && to.kind === "player") return s;
+export function publicSettings(
+  s: DoodleSettings,
+  to: { isHost: boolean; kind: "screen" | "player"; phase: "lobby" | "playing" },
+): DoodleSettings | PublicDoodleSettings {
+  if (to.isHost && to.kind === "player" && to.phase !== "playing") return s;
   return { rounds: s.rounds, drawTime: s.drawTime, difficulty: s.difficulty, customWordCount: s.customWords.length };
 }
 

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { SavedRoom } from "./room-core";
-import { ROOM_KEY, SavePlanner, partKey } from "./save-plan";
+import { ROOM_KEY, SavePlanner, getBatched, partKey } from "./save-plan";
 
 const saved = { v: 1 } as unknown as SavedRoom;
 const parts = (revs: Record<string, string>) =>
@@ -35,5 +35,28 @@ describe("SavePlanner", () => {
     p.plan({ saved, parts: parts({ a: "1" }) });
     p.reset();
     expect(Object.keys(p.plan({ saved, parts: parts({ a: "1" }) }).put)).toEqual([ROOM_KEY, partKey("a")]);
+  });
+});
+
+describe("getBatched", () => {
+  it("reads at most `batch` keys per call and merges every result", async () => {
+    const keys = Array.from({ length: 300 }, (_, i) => partKey(`strokes.${i}`));
+    const calls: number[] = [];
+    const get = async (ks: string[]) => {
+      calls.push(ks.length);
+      if (ks.length > 128) throw new Error("too many keys");
+      return new Map(ks.map((k) => [k, `v:${k}`]));
+    };
+    const out = await getBatched(get, keys, 128);
+    expect(calls).toEqual([128, 128, 44]);
+    expect([...out.keys()]).toEqual(keys);
+    expect(out.get(keys[299]!)).toBe(`v:${keys[299]}`);
+  });
+
+  it("makes no call for no keys", async () => {
+    let called = false;
+    const out = await getBatched(async () => ((called = true), new Map()), [], 128);
+    expect(out.size).toBe(0);
+    expect(called).toBe(false);
   });
 });

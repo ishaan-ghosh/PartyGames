@@ -610,6 +610,17 @@ describe("RoomCore: private settings", () => {
     expect(h.core.serialize().settings).toEqual({ target: 9 });
   });
 
+  it("tells the game the room's phase, so it can hide more during play", () => {
+    const seen: string[] = [];
+    const h = setup({ game: { ...secretive, publicSettings: (s, to) => (seen.push(to.phase), s) } });
+    h.player("c1", "Ana", { hostKey: "HOSTKEY" });
+    h.player("c2", "Ben");
+    expect(new Set(seen)).toEqual(new Set(["lobby"]));
+    seen.length = 0;
+    h.host("c1", { cmd: "start" });
+    expect(new Set(seen)).toEqual(new Set(["playing"]));
+  });
+
   it("hides them from a screen even when it is the host", () => {
     const h = setup({ game: secretive });
     h.screen("s1", { hostKey: "HOSTKEY" });

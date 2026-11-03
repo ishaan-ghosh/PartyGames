@@ -270,6 +270,7 @@ export class RoomCore {
       .sort((a, b) => (a.disconnectedAt ?? 0) - (b.disconnectedAt ?? 0) || a.joinSeq - b.joinSeq)[0];
     if (!victim) return false;
     this.s.members = this.s.members.filter((x) => x !== victim);
+    this.lastResync.delete(victim.id);
     return true;
   }
 
@@ -450,6 +451,7 @@ export class RoomCore {
         const target = s.members.find((x) => x.id === cmd.playerId);
         if (!target || target.id === s.hostId) return NO;
         s.members = s.members.filter((x) => x !== target);
+        this.lastResync.delete(target.id);
         if (target.connId) {
           this.error(target.connId, "KICKED", "You were removed from the room.");
           this.out.close(target.connId);
@@ -487,7 +489,7 @@ export class RoomCore {
     for (const c of this.connected()) {
       // Per connection: a game may hide settings (e.g. Doodle Dash's custom words) from all but the host.
       const settings = this.game.publicSettings
-        ? this.game.publicSettings(this.s.settings, { isHost: c.id === this.s.hostId, kind: c.kind })
+        ? this.game.publicSettings(this.s.settings, { isHost: c.id === this.s.hostId, kind: c.kind, phase: this.s.phase })
         : room.settings;
       this.out.send(c.connId!, { type: "room", room: { ...room, settings }, now });
       if (this.s.phase === "playing") {

@@ -22,9 +22,10 @@ export interface GameModule<S, A, Settings> {
   parseSettings(input: unknown, prev?: Settings): Settings;
   /**
    * Optional: what one connection may see of the settings (default: all of them). The host's
-   * settings form receives this, so it must still work from it.
+   * settings form receives this, so it must still work from it. `phase` is the room's phase: the host
+   * can change mid-game, so a game may hide more while one is being played.
    */
-  publicSettings?(settings: Settings, to: { isHost: boolean; kind: "screen" | "player" }): unknown;
+  publicSettings?(settings: Settings, to: { isHost: boolean; kind: "screen" | "player"; phase: "lobby" | "playing" }): unknown;
   parseAction(input: unknown): A | null;
   setup(players: PlayerInfo[], settings: Settings, seed: number, now: number): S;
   onAction(state: S, playerId: string, action: A, now: number): ActionResult<S>;
