@@ -12,10 +12,13 @@ import {
   type ServerMsg,
   type Viewer,
 } from "@party/shared";
+import { label, type Rejection } from "./rate-limit";
 
 export interface Outbox {
   send(connId: string, msg: ServerMsg): void;
   close(connId: string): void;
+  /** A client message was refused (spec §5: invalid actions are logged). Carries no message bodies. */
+  reject?(r: Rejection): void;
 }
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export type AnyGame = GameModule<any, any, any>;
@@ -77,6 +80,10 @@ function cleanAvatar(avatar: Avatar | undefined): Avatar {
   const len = Array.from(emoji).length;
   const ok = len > 0 && len <= AVATAR_EMOJI_MAX_CODE_POINTS && /[^‍️]/u.test(emoji);
   return { emoji: ok ? emoji : DEFAULT_AVATAR.emoji, color: avatar.color };
+}
+
+function viewerOf(m: Member): Viewer {
+  return m.kind === "screen" ? { kind: "screen" } : { kind: "player", playerId: m.id };
 }
 
 /** All room behavior, free of Cloudflare APIs. The Durable Object adapter feeds it messages and time. */
@@ -147,6 +154,7 @@ export class RoomCore {
   message(connId: string, raw: unknown, now: number): Handled {
     const parsed = ClientMsg.safeParse(raw);
     if (!parsed.success) {
+      this.out.reject?.({ conn: connId, type: label((raw as { type?: unknown } | null)?.type), reason: "bad_message" });
       this.error(connId, "BAD_MESSAGE", "Unrecognized message.");
       return NO;
     }
@@ -154,6 +162,7 @@ export class RoomCore {
     if (msg.type === "hello") return this.hello(connId, msg, now);
     const m = this.memberByConn(connId);
     if (!m) {
+      this.out.reject?.({ conn: connId, type: msg.type, reason: "no_hello" });
       this.error(connId, "BAD_MESSAGE", "Say hello first.");
       return NO;
     }
@@ -175,13 +184,18 @@ export class RoomCore {
     return YES;
   }
 
+  /**
+   * Alarm handler. Broadcasts only if something a client can see changed: clients run countdowns from
+   * deadlines and `now`, so a watchdog or early alarm that moves nothing sends nothing.
+   */
   tick(now: number): void {
+    const before = this.visible();
     if (this.s.hostGoneAt !== null && now >= this.s.hostGoneAt + LIMITS.hostGraceMs) this.transferHost();
     if (this.s.phase === "playing") {
       this.s.gameState = this.game.onTimer(this.s.gameState, now);
       this.checkOver();
     }
-    this.broadcast(now);
+    if (this.visible() !== before) this.broadcast(now);
   }
 
   nextAlarmAt(): number | null {
@@ -237,18 +251,34 @@ export class RoomCore {
 
   /**
    * Lobby only: if `kind` is at `cap`, remove its longest-disconnected member (never a connected one,
-   * never the host). Returns true if there is room afterwards.
+   * never the host, never one gone for less than LIMITS.evictGraceMs). Returns true if there is room afterwards.
    */
-  private makeRoom(kind: Member["kind"], cap: number): boolean {
+  private makeRoom(kind: Member["kind"], cap: number, now: number): boolean {
     const same = this.s.members.filter((x) => x.kind === kind);
     if (same.length < cap) return true;
     if (this.s.phase !== "lobby") return false;
     const victim = same
-      .filter((x) => x.connId === null && x.id !== this.s.hostId)
+      .filter((x) => x.connId === null && x.id !== this.s.hostId && now - (x.disconnectedAt ?? 0) >= LIMITS.evictGraceMs)
       .sort((a, b) => (a.disconnectedAt ?? 0) - (b.disconnectedAt ?? 0) || a.joinSeq - b.joinSeq)[0];
     if (!victim) return false;
     this.s.members = this.s.members.filter((x) => x !== victim);
     return true;
+  }
+
+  /** Lobby only: a disconnected non-host `kind` member is still inside its eviction grace, so a seat will free up. */
+  private seatFreeingSoon(kind: Member["kind"]): boolean {
+    return this.s.phase === "lobby" && this.s.members.some((x) => x.kind === kind && x.connId === null && x.id !== this.s.hostId);
+  }
+
+  /** Refusal text for a full room, with a hint to retry when a seat is only held by someone's grace period. */
+  private fullMessage(kind: Member["kind"]): string {
+    const base = kind === "player" ? `This room is full (${LIMITS.maxPlayers} players).` : `This room already has ${LIMITS.maxScreens} screens.`;
+    return this.seatFreeingSoon(kind) ? `${base} Someone just dropped out, so try again in a minute.` : base;
+  }
+
+  /** A hello was refused. Hellos carry names and keys, so only the reason is logged. */
+  private rejectHello(connId: string, reason: string): void {
+    this.out.reject?.({ conn: connId, type: "hello", reason });
   }
 
   private memberByConn(connId: string): Member | undefined {
@@ -261,11 +291,15 @@ export class RoomCore {
 
   private hello(connId: string, msg: HelloMessage, now: number): Handled {
     if (!this.s.created) {
+      this.rejectHello(connId, "room_not_found");
       this.error(connId, "ROOM_NOT_FOUND", "That room doesn't exist or has closed.");
       this.out.close(connId);
       return NO;
     }
-    if (this.memberByConn(connId)) return NO; // duplicate hello on one socket
+    if (this.memberByConn(connId)) {
+      this.rejectHello(connId, "duplicate_hello"); // one socket, one seat
+      return NO;
+    }
 
     let m: Member | null | undefined = msg.token
       ? this.s.members.find((x) => x.token === msg.token && x.kind === msg.role)
@@ -278,7 +312,7 @@ export class RoomCore {
       m.connId = connId;
       m.disconnectedAt = null;
     } else {
-      m = this.addMember(connId, msg);
+      m = this.addMember(connId, msg, now);
       if (!m) return NO;
     }
 
@@ -301,27 +335,31 @@ export class RoomCore {
     return YES;
   }
 
-  private addMember(connId: string, msg: HelloMessage): Member | null {
+  private addMember(connId: string, msg: HelloMessage, now: number): Member | null {
     let name = "Screen";
     if (msg.role === "player") {
       name = cleanName(msg.name ?? "");
       if (!name) {
+        this.rejectHello(connId, "no_name");
         this.error(connId, "BAD_MESSAGE", "Pick a name first.");
         return null;
       }
       // Name check runs before any eviction so a rejected newcomer never costs anyone their seat.
       const lower = name.toLowerCase();
       if (this.s.members.some((p) => p.kind === "player" && p.name.toLowerCase() === lower)) {
+        this.rejectHello(connId, "name_taken");
         this.error(connId, "NAME_TAKEN", `Someone here is already called ${name}.`);
         return null;
       }
-      if (!this.makeRoom("player", LIMITS.maxPlayers)) {
-        this.error(connId, "ROOM_FULL", `This room is full (${LIMITS.maxPlayers} players).`);
+      if (!this.makeRoom("player", LIMITS.maxPlayers, now)) {
+        this.rejectHello(connId, "room_full");
+        this.error(connId, "ROOM_FULL", this.fullMessage("player"));
         this.out.close(connId);
         return null;
       }
-    } else if (!this.makeRoom("screen", LIMITS.maxScreens)) {
-      this.error(connId, "SCREENS_FULL", `This room already has ${LIMITS.maxScreens} screens.`);
+    } else if (!this.makeRoom("screen", LIMITS.maxScreens, now)) {
+      this.rejectHello(connId, "screens_full");
+      this.error(connId, "SCREENS_FULL", this.fullMessage("screen"));
       this.out.close(connId);
       return null;
     }
@@ -340,9 +378,21 @@ export class RoomCore {
   }
 
   private action(m: Member, payload: unknown, now: number): Handled {
-    if (this.s.phase !== "playing" || m.kind !== "player") return NO;
+    const reject = (reason: string) =>
+      this.out.reject?.({ conn: m.connId!, player: m.id, type: `action:${label((payload as { t?: unknown } | null)?.t)}`, reason });
+    if (this.s.phase !== "playing") {
+      reject("not_playing");
+      return NO;
+    }
+    if (m.kind !== "player") {
+      reject("not_a_player");
+      return NO;
+    }
     const action = this.game.parseAction(payload);
-    if (action === null) return NO;
+    if (action === null) {
+      reject("bad_action");
+      return NO;
+    }
     const res = this.game.onAction(this.s.gameState, m.id, action, now);
     this.s.gameState = res.state;
     for (const ev of res.events ?? []) {
@@ -357,7 +407,9 @@ export class RoomCore {
   }
 
   private hostCmd(m: Member, cmd: HostCommand, now: number): Handled {
+    const reject = (reason: string) => this.out.reject?.({ conn: m.connId!, player: m.id, type: `host:${cmd.cmd}`, reason });
     if (m.id !== this.s.hostId) {
+      reject("not_host");
       this.error(m.connId!, "NOT_HOST", "Only the host can do that.");
       return NO;
     }
@@ -368,6 +420,7 @@ export class RoomCore {
         // Own-property lookup: ids like "constructor" or "__proto__" must not resolve via Object.prototype.
         const game = Object.prototype.hasOwnProperty.call(this.deps.games, cmd.gameId) ? this.deps.games[cmd.gameId] : undefined;
         if (!game) {
+          reject("unknown_game");
           this.error(m.connId!, "BAD_MESSAGE", "Unknown game.");
           return NO;
         }
@@ -446,9 +499,17 @@ export class RoomCore {
     for (const c of this.connected()) {
       this.out.send(c.connId!, { type: "room", room, now });
       if (this.s.phase === "playing") {
-        const viewer: Viewer = c.kind === "screen" ? { kind: "screen" } : { kind: "player", playerId: c.id };
-        this.out.send(c.connId!, { type: "view", payload: this.game.view(this.s.gameState, viewer), now });
+        this.out.send(c.connId!, { type: "view", payload: this.game.view(this.s.gameState, viewerOf(c)), now });
       }
     }
+  }
+
+  /**
+   * What broadcast() would send, minus `now`, as one string. Serialized eagerly because game rules may
+   * mutate their state in place. Views go over the wire as JSON, so comparing JSON is exact.
+   */
+  private visible(): string {
+    const views = this.s.phase === "playing" ? this.connected().map((c) => this.game.view(this.s.gameState, viewerOf(c))) : null;
+    return JSON.stringify([this.snapshot(), views]);
   }
 }

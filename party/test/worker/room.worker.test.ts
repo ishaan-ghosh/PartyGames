@@ -1,5 +1,6 @@
 import { SELF } from "cloudflare:test";
 import { describe, expect, it, vi } from "vitest";
+import { MESSAGE_RATE } from "../../src/rate-limit";
 
 type Msg = { type: string; [k: string]: unknown };
 
@@ -50,6 +51,45 @@ describe("worker", () => {
     ws.send(JSON.stringify({ type: "hello", role: "player", name: "Ana" }));
     await vi.waitFor(() => expect(messages.some((m) => m.type === "welcome")).toBe(true));
     ws.close();
+  });
+
+  it("logs rejected messages as one structured warn line without the message body", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const { code } = await createRoom();
+      const { ws, messages } = await open(code);
+      ws.send(JSON.stringify({ type: "action", payload: { t: "guess", text: "secret words" } }));
+      await vi.waitFor(() => expect(messages[0]).toMatchObject({ type: "error", code: "BAD_MESSAGE" }));
+      const lines = warn.mock.calls.map((c) => String(c[0])).filter((l) => l.includes(`"room":"${code}"`));
+      expect(lines).toHaveLength(1);
+      expect(JSON.parse(lines[0]!)).toMatchObject({ ev: "reject", room: code, type: "action", reason: "no_hello" });
+      expect(lines[0]).not.toContain("secret");
+      ws.close();
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it("drops messages past the per-connection rate limit and keeps the socket open for a short burst", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const { code } = await createRoom();
+      const { ws, messages } = await open(code);
+      for (let i = 0; i < 400; i++) ws.send("not json {");
+      await vi.waitFor(() => expect(messages.length).toBeGreaterThanOrEqual(MESSAGE_RATE.burst));
+      // Let any straggling replies land, then check the excess got no reply at all.
+      await new Promise((r) => setTimeout(r, 100));
+      expect(messages.length).toBeLessThan(300);
+      // The log limited itself too: 400 rejections, far fewer lines.
+      const lines = warn.mock.calls.map((c) => String(c[0])).filter((l) => l.includes(`"room":"${code}"`));
+      expect(lines.length).toBeLessThan(40);
+      // Still open: a short burst is dropped, not punished.
+      ws.send(JSON.stringify({ type: "hello", role: "player", name: "Ana" }));
+      await vi.waitFor(() => expect(messages.some((m) => m.type === "welcome")).toBe(true), { timeout: 3000 });
+      ws.close();
+    } finally {
+      warn.mockRestore();
+    }
   });
 
   it("answers oversized frames with BAD_MESSAGE without parsing them and keeps the room usable", async () => {
