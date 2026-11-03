@@ -1,17 +1,23 @@
 import { describe, expect, it } from "vitest";
-import { closeDialog, inertOutside, isCloseKey, isTextField, lockScroll, openModalDialog, trapTab } from "./dialog";
+import { closeDialog, closeKeyAction, inertOutside, isCloseKey, isTextField, lockScroll, openModalDialog, trapTab } from "./dialog";
 
-type FakeDialog = { open: boolean; attrs: Record<string, string>; showModal?: () => void; close?: () => void;
-  setAttribute(n: string, v: string): void; removeAttribute(n: string): void };
+type FakeDialog = { open?: boolean; attrs: Record<string, string>; showModal?: () => void; close?: () => void;
+  hasAttribute(n: string): boolean; setAttribute(n: string, v: string): void; removeAttribute(n: string): void };
 
+/**
+ * With the API, a real HTMLDialogElement (`open` reflects the attribute). Without it, like a
+ * browser lacking <dialog>: a plain element with no `open` property at all.
+ */
 function fake(withApi: boolean): FakeDialog & { calls: string[] } {
   const calls: string[] = [];
   const d: FakeDialog & { calls: string[] } = {
-    open: false, attrs: {}, calls,
-    setAttribute(n, v) { this.attrs[n] = v; if (n === "open") this.open = true; },
-    removeAttribute(n) { delete this.attrs[n]; if (n === "open") this.open = false; },
+    attrs: {}, calls,
+    hasAttribute(n) { return n in this.attrs; },
+    setAttribute(n, v) { this.attrs[n] = v; if (withApi && n === "open") this.open = true; },
+    removeAttribute(n) { delete this.attrs[n]; if (withApi && n === "open") this.open = false; },
   };
   if (withApi) {
+    d.open = false;
     d.showModal = () => { calls.push("showModal"); d.open = true; };
     d.close = () => { calls.push("close"); d.open = false; };
   }
@@ -51,7 +57,20 @@ describe("dialog helpers", () => {
     closeDialog(d as unknown as HTMLDialogElement);
     expect(d.attrs.open).toBeUndefined();
     expect(d.attrs["data-fallback"]).toBeUndefined();
-    expect(d.open).toBe(false);
+    expect(d.open).toBeUndefined();
+  });
+
+  it("open and close the fallback only once each", () => {
+    const d = fake(false);
+    const attrs: string[] = [];
+    const set = d.setAttribute.bind(d);
+    d.setAttribute = (n, v) => { attrs.push(n); set(n, v); };
+    openModalDialog(d as unknown as HTMLDialogElement);
+    openModalDialog(d as unknown as HTMLDialogElement); // already open: not re-inerted
+    expect(attrs).toEqual(["open", "data-fallback"]);
+    closeDialog(d as unknown as HTMLDialogElement);
+    closeDialog(d as unknown as HTMLDialogElement); // already closed: no-op
+    expect(d.attrs).toEqual({});
   });
 
   it("make the fallback modal: the page outside the dialog goes inert until it closes", () => {
@@ -62,7 +81,7 @@ describe("dialog helpers", () => {
     const root = el("DIV", [bg, panel]);
     const mute = el("BUTTON");
     el("BODY", [root, mute]);
-    const d = Object.assign(dialog, fake(false), { attrs: dialog.attrs });
+    const d = Object.assign(dialog, fake(false), { attrs: dialog.attrs, hasAttribute: dialog.hasAttribute });
     openModalDialog(d as unknown as HTMLDialogElement);
     expect([chips, bg, mute].map((n) => n.hasAttribute("inert"))).toEqual([true, true, true]);
     expect([dialog, panel, root].map((n) => n.hasAttribute("inert"))).toEqual([false, false, false]);
@@ -94,8 +113,30 @@ describe("isCloseKey", () => {
     expect(isCloseKey("Backspace", false)).toBe(true);
     expect(isCloseKey("Backspace", true)).toBe(false);
   });
+  it("treats Tizen and webOS Back as close, by key or keyCode", () => {
+    expect(isCloseKey("XF86Back", false)).toBe(true);
+    expect(isCloseKey("Unidentified", false, 10009)).toBe(true); // Tizen
+    expect(isCloseKey("Unidentified", true, 461)).toBe(true); // webOS
+  });
   it("ignores other keys", () => {
     for (const k of ["Enter", " ", "Tab", "ArrowLeft", "Delete", "b"]) expect(isCloseKey(k, false)).toBe(false);
+    expect(isCloseKey("Unidentified", false, 13)).toBe(false);
+  });
+});
+
+describe("closeKeyAction", () => {
+  it("closes on a fresh close-key press", () => {
+    expect(closeKeyAction({ key: "Escape" }, false)).toBe("close");
+    expect(closeKeyAction({ key: "Unidentified", keyCode: 461, repeat: false }, false)).toBe("close");
+  });
+  it("swallows auto-repeats of a held Back key, so it can't close the whole dialog stack", () => {
+    expect(closeKeyAction({ key: "Escape", repeat: true }, false)).toBe("swallow");
+    expect(closeKeyAction({ key: "BrowserBack", repeat: true }, false)).toBe("swallow");
+  });
+  it("ignores other keys, handled events and Backspace in a text field", () => {
+    expect(closeKeyAction({ key: "Enter" }, false)).toBe("ignore");
+    expect(closeKeyAction({ key: "Escape", defaultPrevented: true }, false)).toBe("ignore");
+    expect(closeKeyAction({ key: "Backspace", repeat: true }, true)).toBe("ignore");
   });
 });
 

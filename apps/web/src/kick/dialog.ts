@@ -1,28 +1,33 @@
 /**
  * Open/close a <dialog>, falling back to the `open` attribute where the browser lacks the
  * showModal/close API (older WebViews). The fallback is made modal enough by hand: `data-fallback`
- * styles it as a full-screen overlay (its own backdrop) and everything outside it goes `inert`.
- * Modal adds Escape/Back handling, initial focus and (for the fallback) a Tab trap.
+ * styles it as a full-screen overlay (its own backdrop), and every sibling of the dialog and of each
+ * of its ancestors up to <body> gets the `inert` attribute (see inertOutside), removed again on
+ * close. WebViews that lack <dialog> may lack `inert` too, so Modal also traps Tab in the fallback,
+ * and adds Escape/Back handling and initial focus.
+ *
+ * The fallback branches check the `open` attribute, not `d.open`: without <dialog> support the
+ * element is a plain HTMLUnknownElement and has no `open` property.
  */
 const fallbackRestore = new WeakMap<HTMLDialogElement, () => void>();
 
 export function openModalDialog(d: HTMLDialogElement): void {
-  if (d.open) return;
   if (typeof d.showModal === "function") {
-    d.showModal();
+    if (!d.open) d.showModal();
     return;
   }
+  if (d.hasAttribute("open")) return;
   d.setAttribute("open", "");
   d.setAttribute("data-fallback", "");
   fallbackRestore.set(d, inertOutside(d));
 }
 
 export function closeDialog(d: HTMLDialogElement): void {
-  if (!d.open) return;
   if (typeof d.close === "function") {
-    d.close();
+    if (d.open) d.close();
     return;
   }
+  if (!d.hasAttribute("open")) return;
   d.removeAttribute("open");
   d.removeAttribute("data-fallback");
   fallbackRestore.get(d)?.();
@@ -51,13 +56,32 @@ export function inertOutside(el: Element): () => void {
   };
 }
 
+/** Back keyCodes on TV platforms whose `key` may be "Unidentified": Tizen (Samsung) and webOS (LG). */
+const TIZEN_BACK = 10009;
+const WEBOS_BACK = 461;
+
 /**
- * Keys that close a dialog: Escape, plus what TV browsers and remotes send for Back. Backspace
- * counts only outside text fields, where it would otherwise delete text.
+ * Keys that close a dialog: Escape, plus what TV browsers and remotes send for Back (BrowserBack,
+ * GoBack, Tizen's XF86Back / keyCode 10009, webOS's keyCode 461). Backspace counts only outside
+ * text fields, where it would otherwise delete text.
  */
-export function isCloseKey(key: string, inTextField: boolean): boolean {
-  if (key === "Escape" || key === "Esc" || key === "BrowserBack" || key === "GoBack") return true;
+export function isCloseKey(key: string, inTextField: boolean, keyCode?: number): boolean {
+  if (key === "Escape" || key === "Esc" || key === "BrowserBack" || key === "GoBack" || key === "XF86Back") return true;
+  if (keyCode === TIZEN_BACK || keyCode === WEBOS_BACK) return true;
   return key === "Backspace" && !inTextField;
+}
+
+/**
+ * What a modal does with a keydown: "close" it, "swallow" it (a close key held down: auto-repeats
+ * must not close the dialogs underneath one by one, nor fall through to Back navigation), or
+ * "ignore" it.
+ */
+export function closeKeyAction(
+  e: { key: string; keyCode?: number; repeat?: boolean; defaultPrevented?: boolean },
+  inTextField: boolean,
+): "close" | "swallow" | "ignore" {
+  if (e.defaultPrevented || !isCloseKey(e.key, inTextField, e.keyCode)) return "ignore";
+  return e.repeat ? "swallow" : "close";
 }
 
 const NON_TEXT_INPUTS = new Set(["button", "checkbox", "color", "file", "image", "radio", "range", "reset", "submit"]);

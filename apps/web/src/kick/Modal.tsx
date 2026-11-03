@@ -1,5 +1,5 @@
 import { useEffect, useRef, type ReactNode } from "react";
-import { closeDialog, isCloseKey, isTextField, lockScroll, openModalDialog, trapTab } from "./dialog";
+import { closeDialog, closeKeyAction, isTextField, lockScroll, openModalDialog, trapTab } from "./dialog";
 import "./kick.css";
 
 const FOCUSABLE = 'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
@@ -8,8 +8,8 @@ const FOCUSABLE = 'button:not([disabled]), [href], input:not([disabled]), select
  * A modal <dialog> (top layer, inert page behind it). Mount it to open, unmount to close.
  * Focus moves to the first `[data-autofocus]` element (or the first button) on open and whenever
  * `focusKey` changes; on unmount it returns to whatever had focus before. Escape, a TV remote's
- * Back key (BrowserBack/GoBack, or Backspace outside a text field) and a click on the backdrop call
- * `onClose`. The page behind doesn't scroll while it's open. Without the <dialog> API the fallback
+ * Back key (see isCloseKey; Backspace only outside a text field) and a click on the backdrop call
+ * `onClose`; auto-repeats of a held key are swallowed, not treated as more presses. The page behind doesn't scroll while it's open. Without the <dialog> API the fallback
  * still traps Tab inside (see dialog.ts).
  */
 export function Modal({ labelledBy, onClose, focusKey, className = "", children }: {
@@ -35,9 +35,12 @@ export function Modal({ labelledBy, onClose, focusKey, className = "", children 
     // Capture, so a game's own key handlers don't see Back/Escape meant for the dialog. Only while
     // the dialog is open: history and Backspace behave normally otherwise.
     const onKey = (e: KeyboardEvent) => {
-      if (e.defaultPrevented || !isCloseKey(e.key, isTextField(document.activeElement))) return;
+      const action = closeKeyAction(e, isTextField(document.activeElement));
+      if (action === "ignore") return;
       e.preventDefault(); // no native cancel, no Back navigation
       e.stopPropagation();
+      // A held Back/Escape auto-repeats: only the first press closes, so it can't unwind the stack.
+      if (action === "swallow") return;
       handledKey.current = true;
       setTimeout(() => (handledKey.current = false), 0);
       onCloseRef.current();

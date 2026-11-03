@@ -74,7 +74,7 @@ export function ScreenLobby({ room, youId, isHost, online, sendHost }: {
         <div className="players-head">
           <h2>{count ? `${count} player${count === 1 ? "" : "s"} in` : "Waiting for players…"}</h2>
           {/* Beside the heading, not under it, so it costs the one-screen lobby no height. */}
-          {kickable.length > 0 && <p className="lobby-kick-hint">Tap a name to remove a player</p>}
+          {kickable.length > 0 && <p className="lobby-kick-hint">Select a name to remove a player</p>}
         </div>
         <div className="players-grid">
           {room.players.map((p) => {
