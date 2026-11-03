@@ -1,16 +1,16 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { RoomConnection } from "../net/useRoom";
-import { NOTICE_TEXT, observeRoom, type NoticeBaseline, type RoomNoticeKind } from "../net/roomNotice";
+import { noticeText, observeRoom, type NoticeBaseline } from "../net/roomNotice";
 
 const NOTICE_MS = 4500;
 
 /**
- * Player phones: a brief notice when the TV drops or returns mid-game, or host passes to you.
+ * Player phones: a brief notice when the TV drops or returns mid-game, or host passes to or from you.
  * Returns the current notice text (null when none) and a dismiss callback.
  */
 export function useRoomNotice(r: RoomConnection): { text: string | null; dismiss(): void } {
   const baseline = useRef<NoticeBaseline | null>(null);
-  const [notice, setNotice] = useState<{ kind: RoomNoticeKind; id: number } | null>(null);
+  const [notice, setNotice] = useState<{ text: string; id: number } | null>(null);
   // Players only: a screen never needs to be told the TV left.
   const youId = r.you?.kind === "player" ? r.you.id : null;
 
@@ -18,8 +18,9 @@ export function useRoomNotice(r: RoomConnection): { text: string | null; dismiss
     const next = observeRoom(baseline.current, { status: r.status, session: r.session, synced: r.synced, room: r.room, youId });
     baseline.current = next.baseline;
     if (next.notice) {
-      const kind = next.notice;
-      setNotice((n) => ({ kind, id: (n?.id ?? 0) + 1 }));
+      // Resolve the text now, against the snapshot that raised it (e.g. the new host's name).
+      const text = noticeText(next.notice, r.room);
+      setNotice((n) => ({ text, id: (n?.id ?? 0) + 1 }));
     }
   }, [r.status, r.session, r.synced, r.room, youId]);
 
@@ -36,7 +37,7 @@ export function useRoomNotice(r: RoomConnection): { text: string | null; dismiss
   }, [notice, inGame]);
 
   const dismiss = useCallback(() => setNotice(null), []);
-  return { text: notice ? NOTICE_TEXT[notice.kind] : null, dismiss };
+  return { text: notice?.text ?? null, dismiss };
 }
 
 /**

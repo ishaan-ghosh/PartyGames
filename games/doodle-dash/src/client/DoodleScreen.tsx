@@ -34,7 +34,7 @@ export function DoodleScreen(p: GameClientProps<DoodleView>) {
         </div>
         <aside className="dd-side">
           <Scoreboard view={view} />
-          <Feed items={view.feed} players={view.players} />
+          <Feed items={view.feed} players={view.players} alwaysFollow />
         </aside>
       </div>
     </div>
