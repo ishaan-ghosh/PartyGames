@@ -44,10 +44,10 @@ The task listings below are the original plan. The code has since moved on; the 
 
 - **Client → room:** `hello {role, token?, hostKey?, name?, avatar?}`, `action {payload}`, `host {cmd}` with `selectGame {gameId}` | `updateSettings {settings}` | `start` | `skip` | `endGame` | `kick {playerId}`, and `resync` (asks for the game's sync event again; answered at most once a second per member).
 - **Room → client:** `welcome {token, you}`, `room {room, now}`, `view {payload, now}`, `event {payload}`, `error {code, message}` (codes include `KICKED` and `REPLACED`). `room.settings` is per connection (see `publicSettings` below).
-- **Optional `GameModule` hooks:** `sync(state, viewer)` (full-picture event sent on (re)join mid-game and on `resync`), `publicSettings(settings, {isHost, kind})`, `parseSettings(input, prev?)`, `splitSave`/`joinSave` (bulky state stored under its own keys, rewritten only when its `rev` changes).
+- **Optional `GameModule` hooks:** `sync(state, viewer)` (full-picture event sent on (re)join mid-game and on `resync`), `publicSettings(settings, {isHost, kind, phase})`, `parseSettings(input, prev?)`, `splitSave`/`joinSave` (bulky state stored under its own keys, rewritten only when its `rev` changes).
 - **Doodle Dash actions:** `choose {index}`, `guess {text}`, `strokeBegin {id, tool, color, size, points}`, `strokeAppend {id, points}` (`id` is the drawer's own stroke key; an append only extends the stroke begun with that id), `fill {color, x, y}`, `undo`, `clear`.
 - **Doodle Dash stroke channel (`event` payloads, `StrokeOp`):** `begin {seq, stroke}`, `append {seq, strokeId, points}`, `undo {seq}`, `clear {seq}`, `sync {seq, strokes}`. `seq` is the stroke version (`opSeq`), which also moves on a new turn's wipe. Views carry no strokes, only `opSeq` and `strokeSig` (`"count:numbers"`); clients ask for `resync` on a gap or mismatch. The drawer's view also has `fillsLeft` (fills capped per turn).
-- **Doodle Dash settings:** custom words go only to a host on a phone; everyone else, every TV included, gets `customWordCount`. An update without `customWords` keeps the current list; `addCustomWords` appends.
+- **Doodle Dash settings:** custom words go only to a host on a phone, and only outside play (lobby/results); during play the host phone, like everyone else and every TV, gets `customWordCount`. An update without `customWords` keeps the current list; `addCustomWords` appends.
 
 ## Global Constraints
 

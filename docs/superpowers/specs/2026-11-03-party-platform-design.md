@@ -106,7 +106,7 @@ Client → server:
 
 Server → client:
 - `welcome {token, you}`
-- `room {room: {code, players, screens, hostId, mode, phase, gameId, settings, lastResults, belowMin}, now}` — `settings` may be redacted per device (Doodle Dash hides custom words from all but a host phone)
+- `room {room: {code, players, screens, hostId, mode, phase, gameId, settings, lastResults, belowMin}, now}` — `settings` may be redacted per device (Doodle Dash hides custom words from all but a host phone outside play; during play and on the TV only their count is sent)
 - `view {payload, now}`
 - `event {payload}` — game events (e.g. stroke ops), not part of the view
 - `error {code, message}`
