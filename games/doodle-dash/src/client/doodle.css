@@ -230,8 +230,18 @@ html.dd-no-overscroll, html.dd-no-overscroll body { overscroll-behavior: none; }
   --dd-grow: clamp(0px, (100vh - var(--stage-chrome-bottom, 0px) - var(--dd-fixed) - (min(100vw, 560px) - 32px) / var(--dd-ar) - 8.5rem) / 3, 16px);
   --dd-grow: clamp(0px, (100dvh - var(--stage-chrome-bottom, 0px) - var(--dd-fixed) - (min(100vw, 560px) - 32px) / var(--dd-ar) - 8.5rem) / 3, 16px);
 }
-.dd-phone-draw-feed .dd-swatch { height: calc(48px + var(--dd-grow, 0px)); }
-.dd-phone-draw-feed .dd-toolrow .dd-tool, .dd-phone-draw-feed .dd-toolrow .dd-size { min-height: calc(48px + var(--dd-grow, 0px)); }
+.dd-phone-draw .dd-swatch { height: calc(48px + var(--dd-grow, 0px)); }
+.dd-phone-draw .dd-toolrow .dd-tool, .dd-phone-draw .dd-toolrow .dd-size { min-height: calc(48px + var(--dd-grow, 0px)); }
+/*
+ * With a TV (no feed) the drawer has far more height than a width-bound 16:9 canvas and the tools
+ * use: the tool rows grow the same way (292px: header, word, tools at 48px, gaps, padding), and
+ * the canvas and tools sit centred in the rest instead of leaving the lower half of the screen empty.
+ */
+.dd-phone.dd-phone-draw:not(.dd-phone-draw-feed) {
+  --dd-grow: clamp(0px, (100vh - var(--stage-chrome-bottom, 0px) - 292px - (min(100vw, 560px) - 32px) / var(--dd-ar)) / 3, 16px);
+  --dd-grow: clamp(0px, (100dvh - var(--stage-chrome-bottom, 0px) - 292px - (min(100vw, 560px) - 32px) / var(--dd-ar)) / 3, 16px);
+}
+.dd-phone-draw:not(.dd-phone-draw-feed) .dd-pad { align-content: center; }
 .dd-phone-draw .dd-feed {
   min-height: 0;
   max-height: none;
@@ -363,6 +373,11 @@ html.dd-no-overscroll, html.dd-no-overscroll body { overscroll-behavior: none; }
   /* The newest guess on one line; older ones scroll (the feed keeps itself scrolled to the newest). */
   .dd-phone-draw[data-side="top"] .dd-feed { height: 28px; padding: 0 10px; gap: 0; font-size: 0.85rem; }
   .dd-phone-draw[data-side="top"] .dd-feed-item { flex: none; line-height: 28px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  /* One line: nothing to scroll back through, and the "New messages" pill would cover the line.
+   * Unscrollable, the feed (parts.tsx) keeps its newest item in view, also right after a rotation
+   * from the "rail" layout where the drawer may have scrolled up. */
+  .dd-phone-draw[data-side="top"] .dd-feed { overflow: hidden; }
+  .dd-phone-draw[data-side="top"] .dd-feed-jump { display: none; }
 
   /*
    * Guesser watching the canvas (phones-only): canvas on the left, as tall as the screen above the
