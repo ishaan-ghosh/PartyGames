@@ -32,11 +32,18 @@ export function wordFit(avail: number, labelWidth: number, wordWidth: number): W
 }
 
 /**
- * Fits the secret word line (`.dd-secret`, holding `.dd-secret-label` and `strong`) to its width,
- * via the `--dd-word-scale` custom property and `data-fit` ("nolabel" | "wrap"). Runs before
- * paint and again when the line's width changes (rotation) or web fonts finish loading. The
- * line's height is fixed in CSS, so the fit never moves the canvas. `fitKey` changes whenever
- * the line is (re)mounted with a new word, e.g. the turn key plus the word; null when not shown.
+ * Media queries in doodle.css that change the word's or label's font size (the sideways drawer
+ * layout). Crossing one can leave the line's width unchanged, so it triggers a refit of its own.
+ */
+export const WORD_SIZE_QUERIES = ["(orientation: landscape) and (max-height: 500px)"];
+
+/**
+ * Fits the secret word line (`.dd-secret`, holding `.dd-secret-label` and `strong`) to its width:
+ * the word's size via the `--dd-word-scale` custom property, the label hidden (visually only) with
+ * `.dd-sr-only`, and `data-fit="wrap"` as the last resort. Runs before paint and again when the
+ * line's width changes, a WORD_SIZE_QUERIES media query flips (rotation), or web fonts finish
+ * loading. The line's height is fixed in CSS, so the fit never moves the canvas. `fitKey` changes
+ * whenever the line is (re)mounted with a new word, e.g. the turn key plus the word; null when not shown.
  */
 export function useFitWord(ref: RefObject<HTMLElement | null>, fitKey: string | null): void {
   useLayoutEffect(() => {
@@ -45,28 +52,31 @@ export function useFitWord(ref: RefObject<HTMLElement | null>, fitKey: string | 
     const strong = el?.querySelector<HTMLElement>("strong");
     if (!el || !label || !strong) return;
     let cancelled = false;
-    let lastWidth = el.clientWidth;
+    let lastWidth = -1;
     const fit = () => {
       if (cancelled) return;
+      lastWidth = el.clientWidth;
       // Measure at full size, label shown, on one line.
       el.style.removeProperty("--dd-word-scale");
+      label.classList.remove("dd-sr-only");
       delete el.dataset.fit;
       const f = wordFit(el.clientWidth, label.getBoundingClientRect().width, strong.getBoundingClientRect().width);
       if (f.scale !== 1) el.style.setProperty("--dd-word-scale", String(f.scale));
+      if (!f.label) label.classList.add("dd-sr-only");
       if (f.wrap) el.dataset.fit = "wrap";
-      else if (!f.label) el.dataset.fit = "nolabel";
     };
     fit();
     const ro = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(() => {
-      if (el.clientWidth === lastWidth) return; // a height change (e.g. wrapping) needs no refit
-      lastWidth = el.clientWidth;
-      fit();
+      if (el.clientWidth !== lastWidth) fit(); // a height change (e.g. wrapping) needs no refit
     });
     ro?.observe(el);
+    const queries = typeof matchMedia === "undefined" ? [] : WORD_SIZE_QUERIES.map((q) => matchMedia(q));
+    for (const mq of queries) mq.addEventListener?.("change", fit);
     void document.fonts?.ready.then(fit);
     return () => {
       cancelled = true;
       ro?.disconnect();
+      for (const mq of queries) mq.removeEventListener?.("change", fit);
     };
   }, [ref, fitKey]);
 }

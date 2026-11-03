@@ -101,13 +101,12 @@ html.dd-no-overscroll, html.dd-no-overscroll body { overscroll-behavior: none; }
 /*
  * The drawer's word stays on one line of fixed height, whatever its length, so the feed and canvas
  * below keep their size (--dd-fixed counts this line once). useFitWord (fitWord.ts) shrinks the
- * word via --dd-word-scale, then hides the "Draw:" label (screen readers still get it), and only
+ * word via --dd-word-scale, then hides the "Draw:" label (.dd-sr-only: screen readers still get it), and only
  * as a last resort lets it wrap: the secret word is never truncated.
  */
 .dd-phone-draw .dd-secret { min-width: 0; height: 1.9rem; line-height: 1.9rem; white-space: nowrap; }
 .dd-phone-draw .dd-secret strong { font-size: calc(1.6rem * var(--dd-word-scale, 1)); }
-.dd-phone-draw .dd-secret[data-fit="nolabel"] .dd-secret-label { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
-.dd-phone-draw .dd-secret[data-fit="wrap"] { height: auto; white-space: normal; overflow-wrap: anywhere; }
+.dd-phone-draw .dd-secret[data-fit="wrap"] { height: auto; line-height: 1.15; white-space: normal; overflow-wrap: anywhere; }
 .dd-title { text-align: center; }
 .dd-choices { display: grid; gap: var(--space-3); }
 .dd-note { margin: 0; text-align: center; color: var(--text-dim); font: 600 1.15rem var(--font-display); }
