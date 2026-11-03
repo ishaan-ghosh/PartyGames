@@ -34,24 +34,48 @@ export function normalizePoint(
   return [clamp01((clientX - rect.left) / rect.width), clamp01((clientY - rect.top) / rect.height)];
 }
 
+/** A client-space box by its edges (a DOMRect fits). */
+export interface Edges {
+  left: number;
+  top: number;
+  right: number;
+  bottom: number;
+}
+
 /**
- * Whether a client point is on the canvas or within `bleed` CSS px of it. A stroke may start in that
- * margin (normalizePoint then clamps its first point to the nearest edge), so a line drawn from one
- * edge to the other works even when the finger lands just off the canvas. False for an empty box.
+ * The box round the canvas where a stroke may start (normalizePoint then clamps its first point to
+ * the nearest edge), so a line drawn from one edge to the other works when the finger lands off the
+ * canvas. Each side reaches `bleed` CSS px past the canvas, or further, to the edge of the canvas's
+ * cell (blank space when the cell is bigger than the 16:9 canvas); where the cell meets the drawer
+ * view's padding (`viewPad`), on through that padding to the view's edge: that is the screen edge
+ * and, sideways on notched phones, the safe-area inset, both often wider than `bleed`.
+ * Null for an empty (hidden) canvas.
  */
-export function inBleed(
-  clientX: number,
-  clientY: number,
-  rect: { left: number; top: number; width: number; height: number },
-  bleed: number,
-): boolean {
-  if (!(rect.width > 0 && rect.height > 0)) return false;
-  return (
-    clientX >= rect.left - bleed &&
-    clientX <= rect.left + rect.width + bleed &&
-    clientY >= rect.top - bleed &&
-    clientY <= rect.top + rect.height + bleed
-  );
+export function strokeReach(canvas: Edges, cell: Edges, view: Edges, viewPad: Edges, bleed: number): Edges | null {
+  if (!(canvas.right > canvas.left && canvas.bottom > canvas.top)) return null;
+  const near = (a: number, b: number) => Math.abs(a - b) <= 1;
+  const left = near(cell.left, view.left + viewPad.left) ? view.left : cell.left;
+  const top = near(cell.top, view.top + viewPad.top) ? view.top : cell.top;
+  const right = near(cell.right, view.right - viewPad.right) ? view.right : cell.right;
+  const bottom = near(cell.bottom, view.bottom - viewPad.bottom) ? view.bottom : cell.bottom;
+  return {
+    left: Math.min(canvas.left - bleed, left),
+    top: Math.min(canvas.top - bleed, top),
+    right: Math.max(canvas.right + bleed, right),
+    bottom: Math.max(canvas.bottom + bleed, bottom),
+  };
+}
+
+export function inEdges(x: number, y: number, e: Edges | null): boolean {
+  return e !== null && x >= e.left && x <= e.right && y >= e.top && y <= e.bottom;
+}
+
+/**
+ * A stroke that starts off the canvas only begins once the finger has moved `slop` CSS px or come
+ * onto the canvas, so a tap beside the canvas (on the word, say) never leaves a dot on its edge.
+ */
+export function marginStrokeBegins(start: [number, number], x: number, y: number, canvas: Edges, slop: number): boolean {
+  return Math.hypot(x - start[0], y - start[1]) >= slop || inEdges(x, y, canvas);
 }
 
 /**

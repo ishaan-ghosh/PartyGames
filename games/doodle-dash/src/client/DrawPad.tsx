@@ -3,7 +3,7 @@ import { BRUSH_SIZES, PALETTE, type DoodleAction, type Stroke } from "../rules";
 import { CanvasView } from "./CanvasView";
 import { DebugOverlay, useDebugDraw } from "./debugDraw";
 import { SIDEWAYS_QUERY, escapeClosesPanel, focusInPanel } from "./sideways";
-import { chunkPoints, fillBadge, fillsRemaining, firstStrokeKey, inBleed, nextStrokeKey, normalizePoint } from "./strokes";
+import { chunkPoints, fillBadge, fillsRemaining, firstStrokeKey, inEdges, marginStrokeBegins, nextStrokeKey, normalizePoint, strokeReach } from "./strokes";
 import type { ActivityRef } from "./useStrokes";
 
 type Tool = "pen" | "eraser" | "fill";
@@ -18,8 +18,13 @@ const SIZE_NAMES = ["small", "medium", "large"];
 const TOOL_ICON: Record<Tool, string> = { pen: "✏️", eraser: "🧽", fill: "🪣" };
 const BATCH_MS = 40;
 const NO_OVERSCROLL = "dd-no-overscroll";
-/** CSS px around the canvas where a stroke may start, its first point clamped to the nearest edge. */
+/**
+ * CSS px around the canvas where a stroke may start, its first point clamped to the nearest edge;
+ * further where the canvas's cell or the screen edge is (strokeReach).
+ */
 const BLEED = 28;
+/** A stroke started off the canvas begins once the finger moves this far (CSS px) or reaches the canvas. */
+const MARGIN_SLOP = 6;
 /** In the margin, these still get the touch: controls, the feed (it scrolls), the tools panel, the host bar, dialogs. */
 const NOT_BLEED =
   "button, a, input, textarea, select, label, [role=button], [role=radio], [contenteditable], dialog, [role=dialog], .dd-feed, .dd-tools, .host-bar";
@@ -65,6 +70,9 @@ export function DrawPad({ strokes, setStrokes, send, activity, fillsLeft: server
   // The id sent with strokeBegin and every strokeAppend of the current stroke, so the server
   // can refuse appends whose begin was lost. Not the local (negative) or server stroke id.
   const strokeKey = useRef<number | null>(null);
+  // A pointer that went down in the margin off the canvas, captured but not drawing yet: the stroke
+  // begins (at the clamped first point) once it moves MARGIN_SLOP px or comes onto the canvas.
+  const waiting = useRef<{ client: [number, number]; point: [number, number] } | null>(null);
   // The parent passes a fresh `send` every render; keep the batching timer independent of that.
   const sendRef = useRef(send);
   sendRef.current = send;
@@ -86,6 +94,7 @@ export function DrawPad({ strokes, setStrokes, send, activity, fillsLeft: server
     /** End the current stroke, if any. Also used when pointer-up never arrives (blur, tab hidden). */
     end() {
       pointer.current = null;
+      waiting.current = null;
       activity.current.drawing = false;
       io.flush();
     },
@@ -186,6 +195,13 @@ export function DrawPad({ strokes, setStrokes, send, activity, fillsLeft: server
     canvas.setPointerCapture?.(e.pointerId);
     pointer.current = e.pointerId;
     activity.current.drawing = true;
+    // From the margin, wait for the finger to move: a tap there (on the word, say) leaves no dot.
+    if (margin) waiting.current = { client: [e.clientX, e.clientY], point: [x, y] };
+    else begin(x, y);
+  };
+
+  const begin = (x: number, y: number) => {
+    if (tool === "fill") return; // fills never get here (see down); this narrows the type
     last.current = [x, y];
     const id = localId.current--;
     const key = strokeKey.current === null ? firstStrokeKey() : nextStrokeKey(strokeKey.current);
@@ -196,7 +212,14 @@ export function DrawPad({ strokes, setStrokes, send, activity, fillsLeft: server
 
   const move = (e: PointerEvent<HTMLCanvasElement>) => {
     if (pointer.current !== e.pointerId) return;
-    const [x, y] = pos(e, e.currentTarget);
+    const rect = e.currentTarget.getBoundingClientRect();
+    const w = waiting.current;
+    if (w) {
+      if (!marginStrokeBegins(w.client, e.clientX, e.clientY, rect, MARGIN_SLOP)) return;
+      waiting.current = null;
+      begin(...w.point);
+    }
+    const [x, y] = normalizePoint(e.clientX, e.clientY, rect);
     if (Math.hypot(x - last.current[0], y - last.current[1]) < 0.002) return;
     last.current = [x, y];
     pending.current.push(x, y);
@@ -215,8 +238,8 @@ export function DrawPad({ strokes, setStrokes, send, activity, fillsLeft: server
   const downRef = useRef(down);
   downRef.current = down;
 
-  // Strokes may start in the margin just off the canvas (BLEED), so an edge-to-edge line works
-  // when the finger lands a little outside. Listened for on the drawer's view (the pad's parent):
+  // Strokes may start in the margin off the canvas (strokeReach), so an edge-to-edge line works
+  // when the finger lands outside, even at the screen edge past a notch's safe-area inset. Listened for on the drawer's view (the pad's parent):
   // upright the side margins are its padding, sideways the pad is display: contents. doodle.css
   // sets touch-action: none on that view; the non-passive touch listeners are the fallback that
   // keeps such a touch from scrolling or zooming the page (React's touch props are passive).
@@ -225,11 +248,18 @@ export function DrawPad({ strokes, setStrokes, send, activity, fillsLeft: server
     const view = pad?.parentElement;
     const canvas = pad?.querySelector("canvas");
     if (!view || !canvas) return;
+    const cell = canvas.parentElement ?? canvas;
+    const reach = () => {
+      const cs = getComputedStyle(view);
+      const px = (v: string) => parseFloat(v) || 0;
+      const viewPad = { left: px(cs.paddingLeft), top: px(cs.paddingTop), right: px(cs.paddingRight), bottom: px(cs.paddingBottom) };
+      return strokeReach(canvas.getBoundingClientRect(), cell.getBoundingClientRect(), view.getBoundingClientRect(), viewPad, BLEED);
+    };
     const inMargin = (target: EventTarget | null, x: number, y: number) =>
       target instanceof Element &&
       target !== canvas && // the canvas's own handlers have it
       !target.closest(NOT_BLEED) &&
-      inBleed(x, y, canvas.getBoundingClientRect(), BLEED);
+      inEdges(x, y, reach());
     const pointerDown = (e: globalThis.PointerEvent) => {
       if (inMargin(e.target, e.clientX, e.clientY)) downRef.current(e, canvas, true);
     };
