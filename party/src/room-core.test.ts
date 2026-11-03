@@ -294,6 +294,16 @@ describe("RoomCore: host commands and games", () => {
     expect(h.last("c1", "room")!.room).toMatchObject({ phase: "playing", gameId: "counter" });
   });
 
+  it("treats re-selecting the current game as a no-op that keeps custom settings", () => {
+    const h = lobby();
+    h.host("s1", { cmd: "updateSettings", settings: { target: 5 } });
+    const roomsBefore = h.msgs("c1", "room").length;
+    expect(h.host("s1", { cmd: "selectGame", gameId: "counter" })).toEqual({ persist: false });
+    expect(h.core.serialize().settings).toEqual({ target: 5 });
+    expect(h.msgs("c1", "room")).toHaveLength(roomsBefore);
+    expect(h.last("s1", "error")).toBeUndefined();
+  });
+
   it("kicks a player but never the host", () => {
     const h = lobby();
     h.host("s1", { cmd: "kick", playerId: h.id("c2") });

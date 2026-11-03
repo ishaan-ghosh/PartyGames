@@ -360,6 +360,7 @@ export class RoomCore {
           this.error(m.connId!, "BAD_MESSAGE", "Unknown game.");
           return NO;
         }
+        if (cmd.gameId === s.gameId) return NO; // re-selecting keeps the host's custom settings
         s.gameId = cmd.gameId;
         s.settings = game.defaultSettings;
         break;
