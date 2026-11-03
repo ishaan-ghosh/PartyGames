@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { GameModule, ServerMsg } from "@party/shared";
+import { LIMITS, type GameModule, type ServerMsg } from "@party/shared";
 import type { Rejection } from "./rate-limit";
 import { RoomCore, type CoreDeps, type Outbox } from "./room-core";
 
@@ -470,18 +470,19 @@ describe("RoomCore: lobby eviction for caps", () => {
     h.core.disconnect("c0", 1);
     h.core.disconnect("c3", 10);
     h.core.disconnect("c5", 5);
-    h.player("n1", "New1", {}, 20);
+    const later = LIMITS.evictGraceMs + 10;
+    h.player("n1", "New1", {}, later + 20);
     expect(h.last("n1", "welcome")).toBeDefined();
     let names = h.last("n1", "room")!.room.players.map((p) => p.name);
     expect(names).not.toContain("P5");
     expect(names).toContain("P3");
     expect(names).toContain("P0");
     expect(names).toHaveLength(12);
-    h.player("n2", "New2", {}, 21);
+    h.player("n2", "New2", {}, later + 21);
     names = h.last("n2", "room")!.room.players.map((p) => p.name);
     expect(names).not.toContain("P3");
     expect(names).toContain("P0");
-    h.player("n3", "New3", {}, 22);
+    h.player("n3", "New3", {}, later + 22);
     expect(h.last("n3", "error")?.code).toBe("ROOM_FULL");
     expect(h.closed).toContain("n3");
   });
@@ -491,13 +492,54 @@ describe("RoomCore: lobby eviction for caps", () => {
     h.player("c1", "Ana"); // host
     for (let i = 0; i < 4; i++) h.screen(`s${i}`);
     h.core.disconnect("s2", 5);
-    h.screen("s4", {}, 10);
+    h.screen("s4", {}, LIMITS.evictGraceMs + 10);
     expect(h.last("s4", "welcome")?.you.kind).toBe("screen");
     const room = h.last("s4", "room")!.room;
     expect(room.screens).toHaveLength(4);
     expect(room.screens.every((s) => s.connected)).toBe(true);
-    h.screen("s5", {}, 11);
+    h.screen("s5", {}, LIMITS.evictGraceMs + 11);
     expect(h.last("s5", "error")?.code).toBe("SCREENS_FULL");
+  });
+
+  it("never evicts anyone disconnected for less than the grace period", () => {
+    const h = setup();
+    for (let i = 0; i < 12; i++) h.player(`c${i}`, `P${i}`);
+    h.core.disconnect("c5", 0);
+    h.core.disconnect("c3", 30_000);
+    // Only P5 is past grace at 50 s: it goes, P3 (asleep 20 s) stays.
+    h.player("n1", "New1", {}, 50_000);
+    let names = h.last("n1", "room")!.room.players.map((p) => p.name);
+    expect(names).not.toContain("P5");
+    expect(names).toContain("P3");
+    h.player("n2", "New2", {}, 30_000 + LIMITS.evictGraceMs - 1);
+    expect(h.last("n2", "error")?.code).toBe("ROOM_FULL");
+    expect(h.closed).toContain("n2");
+    h.player("n3", "New3", {}, 30_000 + LIMITS.evictGraceMs);
+    names = h.last("n3", "room")!.room.players.map((p) => p.name);
+    expect(names).not.toContain("P3");
+    expect(names).toContain("New3");
+  });
+
+  it("applies the grace period to screens too", () => {
+    const h = setup();
+    h.player("c1", "Ana");
+    for (let i = 0; i < 4; i++) h.screen(`s${i}`);
+    h.core.disconnect("s2", 1000);
+    h.screen("s4", {}, 1000 + LIMITS.evictGraceMs - 1);
+    expect(h.last("s4", "error")?.code).toBe("SCREENS_FULL");
+    h.screen("s5", {}, 1000 + LIMITS.evictGraceMs);
+    expect(h.last("s5", "welcome")?.you.kind).toBe("screen");
+  });
+
+  it("keeps a sleeping phone's seat so it can come back after a refused newcomer", () => {
+    const h = setup();
+    for (let i = 0; i < 12; i++) h.player(`c${i}`, `P${i}`);
+    const t4 = h.last("c4", "welcome")!.token;
+    h.core.disconnect("c4", 1000);
+    h.player("n1", "New1", {}, 2000);
+    expect(h.last("n1", "error")?.code).toBe("ROOM_FULL");
+    h.player("c4b", "ignored", { token: t4 }, 3000);
+    expect(h.last("c4b", "welcome")?.you.id).toBe(h.id("c4"));
   });
 
   it("never evicts connected members", () => {

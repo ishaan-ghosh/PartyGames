@@ -242,14 +242,14 @@ export class RoomCore {
 
   /**
    * Lobby only: if `kind` is at `cap`, remove its longest-disconnected member (never a connected one,
-   * never the host). Returns true if there is room afterwards.
+   * never the host, never one gone for less than LIMITS.evictGraceMs). Returns true if there is room afterwards.
    */
-  private makeRoom(kind: Member["kind"], cap: number): boolean {
+  private makeRoom(kind: Member["kind"], cap: number, now: number): boolean {
     const same = this.s.members.filter((x) => x.kind === kind);
     if (same.length < cap) return true;
     if (this.s.phase !== "lobby") return false;
     const victim = same
-      .filter((x) => x.connId === null && x.id !== this.s.hostId)
+      .filter((x) => x.connId === null && x.id !== this.s.hostId && now - (x.disconnectedAt ?? 0) >= LIMITS.evictGraceMs)
       .sort((a, b) => (a.disconnectedAt ?? 0) - (b.disconnectedAt ?? 0) || a.joinSeq - b.joinSeq)[0];
     if (!victim) return false;
     this.s.members = this.s.members.filter((x) => x !== victim);
@@ -283,7 +283,7 @@ export class RoomCore {
       m.connId = connId;
       m.disconnectedAt = null;
     } else {
-      m = this.addMember(connId, msg);
+      m = this.addMember(connId, msg, now);
       if (!m) return NO;
     }
 
@@ -306,7 +306,7 @@ export class RoomCore {
     return YES;
   }
 
-  private addMember(connId: string, msg: HelloMessage): Member | null {
+  private addMember(connId: string, msg: HelloMessage, now: number): Member | null {
     let name = "Screen";
     if (msg.role === "player") {
       name = cleanName(msg.name ?? "");
@@ -320,12 +320,12 @@ export class RoomCore {
         this.error(connId, "NAME_TAKEN", `Someone here is already called ${name}.`);
         return null;
       }
-      if (!this.makeRoom("player", LIMITS.maxPlayers)) {
+      if (!this.makeRoom("player", LIMITS.maxPlayers, now)) {
         this.error(connId, "ROOM_FULL", `This room is full (${LIMITS.maxPlayers} players).`);
         this.out.close(connId);
         return null;
       }
-    } else if (!this.makeRoom("screen", LIMITS.maxScreens)) {
+    } else if (!this.makeRoom("screen", LIMITS.maxScreens, now)) {
       this.error(connId, "SCREENS_FULL", `This room already has ${LIMITS.maxScreens} screens.`);
       this.out.close(connId);
       return null;

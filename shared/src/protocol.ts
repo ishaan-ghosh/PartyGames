@@ -6,6 +6,8 @@ export const LIMITS = {
   nameMax: 16,
   hostGraceMs: 15_000,
   emptyRoomTtlMs: 10 * 60_000,
+  /** Lobby caps only evict members disconnected at least this long, so a phone that just slept keeps its seat. */
+  evictGraceMs: 45_000,
 } as const;
 
 export const Avatar = z.object({
