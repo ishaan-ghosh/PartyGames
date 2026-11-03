@@ -419,7 +419,7 @@ export class RoomCore {
       }
       case "updateSettings":
         if (s.phase !== "lobby") return NO;
-        s.settings = this.game.parseSettings(cmd.settings);
+        s.settings = this.game.parseSettings(cmd.settings, s.settings);
         break;
       case "start": {
         if (s.phase !== "lobby") return NO;
@@ -485,7 +485,11 @@ export class RoomCore {
   private broadcast(now: number): void {
     const room = this.snapshot();
     for (const c of this.connected()) {
-      this.out.send(c.connId!, { type: "room", room, now });
+      // Per connection: a game may hide settings (e.g. Doodle Dash's custom words) from all but the host.
+      const settings = this.game.publicSettings
+        ? this.game.publicSettings(this.s.settings, { isHost: c.id === this.s.hostId, kind: c.kind })
+        : room.settings;
+      this.out.send(c.connId!, { type: "room", room: { ...room, settings }, now });
       if (this.s.phase === "playing") {
         const viewer: Viewer = c.kind === "screen" ? { kind: "screen" } : { kind: "player", playerId: c.id };
         this.out.send(c.connId!, { type: "view", payload: this.game.view(this.s.gameState, viewer), now });

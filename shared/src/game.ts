@@ -18,7 +18,13 @@ export interface GameModule<S, A, Settings> {
   id: string;
   meta: GameMeta;
   defaultSettings: Settings;
-  parseSettings(input: unknown): Settings;
+  /** `prev` is the room's current settings, so an update may leave out fields it can't see. */
+  parseSettings(input: unknown, prev?: Settings): Settings;
+  /**
+   * Optional: what one connection may see of the settings (default: all of them). The host's
+   * settings form receives this, so it must still work from it.
+   */
+  publicSettings?(settings: Settings, to: { isHost: boolean; kind: "screen" | "player" }): unknown;
   parseAction(input: unknown): A | null;
   setup(players: PlayerInfo[], settings: Settings, seed: number, now: number): S;
   onAction(state: S, playerId: string, action: A, now: number): ActionResult<S>;

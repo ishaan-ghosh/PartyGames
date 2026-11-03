@@ -586,6 +586,46 @@ describe("RoomCore: name and avatar hygiene", () => {
   });
 });
 
+describe("RoomCore: private settings", () => {
+  /** Counter whose settings hide `target` from everyone but a host on a phone, and keep it when omitted. */
+  const secretive: GameModule<CState, CAction, { target: number }> = {
+    ...counter,
+    parseSettings: (input, prev) => {
+      const t = (input as { target?: unknown } | null)?.target;
+      return { target: typeof t === "number" ? t : (prev?.target ?? 3) };
+    },
+    publicSettings: (s, to) => (to.isHost && to.kind === "player" ? s : { hidden: true }),
+  };
+  const settingsOf = (h: ReturnType<typeof setup>, conn: string) => h.last(conn, "room")!.room.settings;
+
+  it("sends each connection the game's public settings for it: full only to a host player", () => {
+    const h = setup({ game: secretive });
+    h.player("c1", "Ana", { hostKey: "HOSTKEY" });
+    h.player("c2", "Ben");
+    h.screen("s1");
+    h.host("c1", { cmd: "updateSettings", settings: { target: 9 } });
+    expect(settingsOf(h, "c1")).toEqual({ target: 9 });
+    expect(settingsOf(h, "c2")).toEqual({ hidden: true });
+    expect(settingsOf(h, "s1")).toEqual({ hidden: true });
+    expect(h.core.serialize().settings).toEqual({ target: 9 });
+  });
+
+  it("hides them from a screen even when it is the host", () => {
+    const h = setup({ game: secretive });
+    h.screen("s1", { hostKey: "HOSTKEY" });
+    h.player("c1", "Ana");
+    expect(settingsOf(h, "s1")).toEqual({ hidden: true });
+  });
+
+  it("passes the current settings to the parser so a partial update keeps hidden fields", () => {
+    const h = setup({ game: secretive });
+    h.player("c1", "Ana", { hostKey: "HOSTKEY" });
+    h.host("c1", { cmd: "updateSettings", settings: { target: 9 } });
+    h.host("c1", { cmd: "updateSettings", settings: { hidden: true } });
+    expect(h.core.serialize().settings).toEqual({ target: 9 });
+  });
+});
+
 describe("RoomCore: game sync events", () => {
   /** Counter whose `sync` returns the full count, tagged with who it was built for. */
   const synced: GameModule<CState, CAction, { target: number }> = {

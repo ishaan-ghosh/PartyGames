@@ -2,7 +2,7 @@ import type { ActionResult, GameModule } from "@party/shared";
 import { parseAction } from "./actions";
 import { handleGuess } from "./guess";
 import { onPresence } from "./presence";
-import { defaultSettings, parseSettings } from "./settings";
+import { defaultSettings, parseSettings, publicSettings } from "./settings";
 import { joinSave, splitSave } from "./save";
 import { handleStroke, syncOp } from "./strokes";
 import { nextTimerAt, onChoose, onSkip, onTimer, setup } from "./turns";
@@ -25,6 +25,7 @@ export const doodleDash: GameModule<DoodleState, DoodleAction, DoodleSettings> =
   meta: { name: "Doodle Dash", tagline: "Draw fast. Guess faster.", minPlayers: 2, maxPlayers: 12, accent: "#7f5af0" },
   defaultSettings,
   parseSettings,
+  publicSettings,
   parseAction,
   setup,
   onAction(state, playerId, action, now) {
@@ -54,5 +55,6 @@ export const doodleDash: GameModule<DoodleState, DoodleAction, DoodleSettings> =
 
 export type { DoodleAction, DoodleSettings, DoodleState, Stroke, StrokeOp } from "./types";
 export type { DoodleView, ViewFeedItem } from "./view";
+export type { PublicDoodleSettings } from "./settings";
 export { EMPTY_SIG, strokeSignature } from "./strokes";
 export { BRUSH_SIZES, CHOOSE_MS, MAX_FILLS, MAX_POINTS_PER_BATCH, PALETTE, REVEAL_MS } from "./types";
