@@ -45,6 +45,7 @@ export function HostBar({ room, youId, onSkip, onEnd, onKick, disabled = false, 
           data-testid="host-players"
           aria-haspopup="dialog"
           aria-label="Players"
+          title="Players"
           onClick={() => setShowPlayers(true)}
         >
           {/* Icon-only on narrow phones, so the bar stays clear of the mute toggle. */}
