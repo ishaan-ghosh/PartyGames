@@ -35,6 +35,26 @@ export function normalizePoint(
 }
 
 /**
+ * Whether a client point is on the canvas or within `bleed` CSS px of it. A stroke may start in that
+ * margin (normalizePoint then clamps its first point to the nearest edge), so a line drawn from one
+ * edge to the other works even when the finger lands just off the canvas. False for an empty box.
+ */
+export function inBleed(
+  clientX: number,
+  clientY: number,
+  rect: { left: number; top: number; width: number; height: number },
+  bleed: number,
+): boolean {
+  if (!(rect.width > 0 && rect.height > 0)) return false;
+  return (
+    clientX >= rect.left - bleed &&
+    clientX <= rect.left + rect.width + bleed &&
+    clientY >= rect.top - bleed &&
+    clientY <= rect.top + rect.height + bleed
+  );
+}
+
+/**
  * Fills the drawer may still use this turn. Stroke actions are quiet (no new view), so the server's
  * `fillsLeft` goes stale while drawing; the pad also counts the fills it sent this turn and the
  * lower of the two wins. Fills the server refused anyway are resynced away by the idle shape check.

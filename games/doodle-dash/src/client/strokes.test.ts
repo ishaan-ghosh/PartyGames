@@ -9,6 +9,7 @@ import {
   firstStrokeKey,
   floodFillData,
   hexToRgb,
+  inBleed,
   nextStrokeKey,
   normalizePoint,
   planRender,
@@ -66,6 +67,34 @@ describe("floodFillData", () => {
 
   it("parses hex colors", () => {
     expect(hexToRgb("#ff8906")).toEqual([255, 137, 6]);
+  });
+});
+
+describe("inBleed", () => {
+  const rect = { left: 100, top: 50, width: 400, height: 300 };
+
+  it("is true on the canvas and in the margin around it", () => {
+    expect(inBleed(300, 200, rect, 24)).toBe(true);
+    expect(inBleed(90, 200, rect, 24)).toBe(true); // 10px left of the left edge
+    expect(inBleed(510, 200, rect, 24)).toBe(true); // 10px right of the right edge
+    expect(inBleed(76, 26, rect, 24)).toBe(true); // the corner of the margin
+    expect(inBleed(524, 374, rect, 24)).toBe(true);
+  });
+
+  it("is false past the margin", () => {
+    expect(inBleed(75, 200, rect, 24)).toBe(false);
+    expect(inBleed(300, 375, rect, 24)).toBe(false);
+    expect(inBleed(300, 25, rect, 24)).toBe(false);
+    expect(inBleed(525, 200, rect, 24)).toBe(false);
+  });
+
+  it("is false for an empty (hidden) canvas", () => {
+    expect(inBleed(0, 0, { left: 0, top: 0, width: 0, height: 0 }, 24)).toBe(false);
+  });
+
+  it("pairs with normalizePoint: a margin point maps to the nearest edge", () => {
+    expect(inBleed(90, 200, rect, 24) && normalizePoint(90, 200, rect)).toEqual([0, 0.5]);
+    expect(inBleed(520, 360, rect, 24) && normalizePoint(520, 360, rect)).toEqual([1, 1]);
   });
 });
 

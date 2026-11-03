@@ -1,4 +1,4 @@
-import { useMemo, useState, type PointerEvent } from "react";
+import { useMemo, useState } from "react";
 
 /**
  * On-device touch debugging for the drawer's canvas, off unless the page URL has `?debugdraw=1`.
@@ -37,15 +37,16 @@ export function debugLines(i: DebugInfo): string[] {
   ];
 }
 
-export function useDebugDraw(): { info: DebugInfo | null; record(e: PointerEvent<HTMLCanvasElement>): void } | null {
+/** `record` takes the pointerdown and the drawer's canvas (the touch may start in the margin around it). */
+export function useDebugDraw(): { info: DebugInfo | null; record(e: { clientX: number; clientY: number }, canvas: HTMLCanvasElement): void } | null {
   const enabled = useMemo(() => typeof location !== "undefined" && debugDrawEnabled(location.search), []);
   const [info, setInfo] = useState<DebugInfo | null>(null);
   if (!enabled) return null;
   return {
     info,
-    record(e) {
-      const r = e.currentTarget.getBoundingClientRect();
-      const cell = (e.currentTarget.parentElement ?? e.currentTarget).getBoundingClientRect();
+    record(e, canvas) {
+      const r = canvas.getBoundingClientRect();
+      const cell = (canvas.parentElement ?? canvas).getBoundingClientRect();
       const vv = window.visualViewport;
       setInfo({
         clientX: e.clientX,

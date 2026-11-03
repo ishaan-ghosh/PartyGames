@@ -3,7 +3,7 @@ import { BRUSH_SIZES, PALETTE, type DoodleAction, type Stroke } from "../rules";
 import { CanvasView } from "./CanvasView";
 import { DebugOverlay, useDebugDraw } from "./debugDraw";
 import { SIDEWAYS_QUERY, escapeClosesPanel, focusInPanel } from "./sideways";
-import { chunkPoints, fillBadge, fillsRemaining, firstStrokeKey, nextStrokeKey, normalizePoint } from "./strokes";
+import { chunkPoints, fillBadge, fillsRemaining, firstStrokeKey, inBleed, nextStrokeKey, normalizePoint } from "./strokes";
 import type { ActivityRef } from "./useStrokes";
 
 type Tool = "pen" | "eraser" | "fill";
@@ -18,6 +18,11 @@ const SIZE_NAMES = ["small", "medium", "large"];
 const TOOL_ICON: Record<Tool, string> = { pen: "✏️", eraser: "🧽", fill: "🪣" };
 const BATCH_MS = 40;
 const NO_OVERSCROLL = "dd-no-overscroll";
+/** CSS px around the canvas where a stroke may start, its first point clamped to the nearest edge. */
+const BLEED = 28;
+/** In the margin, these still get the touch: controls, the feed (it scrolls), the tools panel, the host bar, dialogs. */
+const NOT_BLEED =
+  "button, a, input, textarea, select, label, [role=button], [role=radio], [contenteditable], dialog, [role=dialog], .dd-feed, .dd-tools, .host-bar";
 
 const isSideways = () => typeof matchMedia !== "undefined" && matchMedia(SIDEWAYS_QUERY).matches;
 
@@ -45,6 +50,7 @@ export function DrawPad({ strokes, setStrokes, send, activity, fillsLeft: server
   const [panelOpen, setPanelOpen] = useState(false);
   const panelId = useId();
   const panelRef = useRef<HTMLDivElement>(null);
+  const padRef = useRef<HTMLDivElement>(null);
   const toggleRef = useRef<HTMLButtonElement>(null);
   // Set when the toggle opens the panel from the keyboard: focus then moves to its first control.
   const focusPanel = useRef(false);
@@ -140,11 +146,13 @@ export function DrawPad({ strokes, setStrokes, send, activity, fillsLeft: server
     return () => window.removeEventListener("keydown", key);
   }, [panelOpen]);
 
-  const pos = (e: PointerEvent<HTMLCanvasElement>) => normalizePoint(e.clientX, e.clientY, e.currentTarget.getBoundingClientRect());
+  const pos = (e: { clientX: number; clientY: number }, canvas: HTMLCanvasElement) =>
+    normalizePoint(e.clientX, e.clientY, canvas.getBoundingClientRect());
 
-  const down = (e: PointerEvent<HTMLCanvasElement>) => {
+  /** A pointer goes down on the canvas or, with `margin`, in the bleed margin around it. */
+  const down = (e: globalThis.PointerEvent, canvas: HTMLCanvasElement, margin = false) => {
     if (e.pointerType === "mouse" && e.button !== 0) return;
-    debug?.record(e);
+    debug?.record(e, canvas);
     if (panelOpen && pointer.current === null) {
       closePanel();
       // A tap on the drawing while the panel is out just closes it, like tapping outside a menu.
@@ -162,15 +170,20 @@ export function DrawPad({ strokes, setStrokes, send, activity, fillsLeft: server
     }
     e.preventDefault();
     io.flush();
-    const [x, y] = pos(e);
+    const [x, y] = pos(e, canvas);
     if (tool === "fill") {
+      // A fill needs a spot on the drawing: a tap that misses it (in the margin) does nothing,
+      // rather than filling whatever happens to touch the nearest edge.
+      if (margin) return;
       if (fillsLeft <= 0) return; // the server would refuse it
       setFillsSent((n) => n + 1);
       io.send({ t: "fill", color, x, y });
       setStrokes((s) => [...s, { id: localId.current--, tool: "fill", color, x, y }]);
       return;
     }
-    e.currentTarget.setPointerCapture?.(e.pointerId);
+    // Captured by the canvas, even from the margin: every move reaches `move` (clamped to the edge
+    // off the canvas), and the stroke ends on pointer-up or -cancel wherever the finger is.
+    canvas.setPointerCapture?.(e.pointerId);
     pointer.current = e.pointerId;
     activity.current.drawing = true;
     last.current = [x, y];
@@ -183,7 +196,7 @@ export function DrawPad({ strokes, setStrokes, send, activity, fillsLeft: server
 
   const move = (e: PointerEvent<HTMLCanvasElement>) => {
     if (pointer.current !== e.pointerId) return;
-    const [x, y] = pos(e);
+    const [x, y] = pos(e, e.currentTarget);
     if (Math.hypot(x - last.current[0], y - last.current[1]) < 0.002) return;
     last.current = [x, y];
     pending.current.push(x, y);
@@ -198,6 +211,58 @@ export function DrawPad({ strokes, setStrokes, send, activity, fillsLeft: server
   const up = (e: PointerEvent<HTMLCanvasElement>) => {
     if (pointer.current === e.pointerId) io.end();
   };
+
+  const downRef = useRef(down);
+  downRef.current = down;
+
+  // Strokes may start in the margin just off the canvas (BLEED), so an edge-to-edge line works
+  // when the finger lands a little outside. Listened for on the drawer's view (the pad's parent):
+  // upright the side margins are its padding, sideways the pad is display: contents. doodle.css
+  // sets touch-action: none on that view; the non-passive touch listeners are the fallback that
+  // keeps such a touch from scrolling or zooming the page (React's touch props are passive).
+  useEffect(() => {
+    const pad = padRef.current;
+    const view = pad?.parentElement;
+    const canvas = pad?.querySelector("canvas");
+    if (!view || !canvas) return;
+    const inMargin = (target: EventTarget | null, x: number, y: number) =>
+      target instanceof Element &&
+      target !== canvas && // the canvas's own handlers have it
+      !target.closest(NOT_BLEED) &&
+      inBleed(x, y, canvas.getBoundingClientRect(), BLEED);
+    const pointerDown = (e: globalThis.PointerEvent) => {
+      if (inMargin(e.target, e.clientX, e.clientY)) downRef.current(e, canvas, true);
+    };
+    const held = new Set<number>(); // touches that started in the margin
+    const touchStart = (e: TouchEvent) => {
+      let mine = false;
+      for (const t of Array.from(e.changedTouches)) {
+        if (inMargin(t.target, t.clientX, t.clientY)) {
+          held.add(t.identifier);
+          mine = true;
+        }
+      }
+      if (mine && e.cancelable) e.preventDefault();
+    };
+    const touchMove = (e: TouchEvent) => {
+      if (e.cancelable && Array.from(e.touches).some((t) => held.has(t.identifier))) e.preventDefault();
+    };
+    const touchEnd = (e: TouchEvent) => {
+      for (const t of Array.from(e.changedTouches)) held.delete(t.identifier);
+    };
+    view.addEventListener("pointerdown", pointerDown);
+    view.addEventListener("touchstart", touchStart, { passive: false });
+    view.addEventListener("touchmove", touchMove, { passive: false });
+    view.addEventListener("touchend", touchEnd);
+    view.addEventListener("touchcancel", touchEnd);
+    return () => {
+      view.removeEventListener("pointerdown", pointerDown);
+      view.removeEventListener("touchstart", touchStart);
+      view.removeEventListener("touchmove", touchMove);
+      view.removeEventListener("touchend", touchEnd);
+      view.removeEventListener("touchcancel", touchEnd);
+    };
+  }, []);
 
   const edit = (action: DoodleAction, local: (s: Stroke[]) => Stroke[]) => {
     io.end();
@@ -217,7 +282,7 @@ export function DrawPad({ strokes, setStrokes, send, activity, fillsLeft: server
   const undo = () => edit({ t: "undo" }, (s) => s.slice(0, -1));
 
   return (
-    <div className="dd-pad">
+    <div className="dd-pad" ref={padRef}>
       <div className="dd-canvas-cell">
         <CanvasView
           strokes={strokes}
@@ -225,7 +290,7 @@ export function DrawPad({ strokes, setStrokes, send, activity, fillsLeft: server
           className="dd-canvas-draw"
           label="Your drawing"
           blockTouch
-          onPointerDown={down}
+          onPointerDown={(e) => down(e.nativeEvent, e.currentTarget)}
           onPointerMove={move}
           onPointerUp={up}
           onPointerCancel={up}
