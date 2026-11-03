@@ -531,6 +531,38 @@ describe("RoomCore: lobby eviction for caps", () => {
     expect(h.last("s5", "welcome")?.you.kind).toBe("screen");
   });
 
+  it("tells a refused newcomer to try again soon while a seat is only held by the grace period", () => {
+    const h = setup();
+    for (let i = 0; i < 12; i++) h.player(`c${i}`, `P${i}`);
+    h.player("n0", "New0", {}, 500);
+    expect(h.last("n0", "error")?.message).not.toMatch(/try again/i);
+    h.core.disconnect("c4", 1000);
+    h.player("n1", "New1", {}, 2000);
+    expect(h.last("n1", "error")).toMatchObject({ code: "ROOM_FULL", message: expect.stringMatching(/try again in a minute/) });
+    h.player("n2", "New2", {}, 1000 + LIMITS.evictGraceMs);
+    expect(h.last("n2", "welcome")).toBeDefined();
+
+    const g = setup();
+    g.player("c1", "Ana");
+    for (let i = 0; i < 4; i++) g.screen(`s${i}`);
+    g.screen("s4");
+    expect(g.last("s4", "error")?.message).not.toMatch(/try again/i);
+    g.core.disconnect("s2", 1000);
+    g.screen("s5", {}, 2000);
+    expect(g.last("s5", "error")).toMatchObject({ code: "SCREENS_FULL", message: expect.stringMatching(/try again in a minute/) });
+  });
+
+  it("does not promise a seat mid-game, when nobody can be evicted", () => {
+    const h = setup();
+    h.screen("s1", { hostKey: "HOSTKEY" });
+    for (let i = 0; i < 12; i++) h.player(`c${i}`, `P${i}`);
+    h.host("s1", { cmd: "start" });
+    h.core.disconnect("c4", 5);
+    h.player("n1", "New1", {}, 10);
+    expect(h.last("n1", "error")?.code).toBe("ROOM_FULL");
+    expect(h.last("n1", "error")?.message).not.toMatch(/try again/i);
+  });
+
   it("keeps a sleeping phone's seat so it can come back after a refused newcomer", () => {
     const h = setup();
     for (let i = 0; i < 12; i++) h.player(`c${i}`, `P${i}`);
@@ -672,6 +704,29 @@ describe("RoomCore: logging rejected messages", () => {
       { conn: "c1", player: h.id("c1"), type: "action:nope", reason: "bad_action" },
       { conn: "s1", player: h.id("s1"), type: "action:inc", reason: "not_a_player" },
     ]);
+  });
+
+  it("reports refused hellos with only a reason, never the name or keys", () => {
+    const none = setup({ created: false });
+    none.player("x1", "Ana", { hostKey: "SECRETKEY" });
+    expect(none.rejects).toEqual([{ conn: "x1", type: "hello", reason: "room_not_found" }]);
+
+    const h = lobby();
+    h.player("c1", "Ana"); // same socket again
+    h.player("c3", "\u200b");
+    h.player("c4", "ana");
+    for (let i = 0; i < 10; i++) h.player(`f${i}`, `F${i}`);
+    h.player("c5", "Zed");
+    for (let i = 0; i < 3; i++) h.screen(`t${i}`);
+    h.screen("t3");
+    expect(h.rejects).toEqual([
+      { conn: "c1", type: "hello", reason: "duplicate_hello" },
+      { conn: "c3", type: "hello", reason: "no_name" },
+      { conn: "c4", type: "hello", reason: "name_taken" },
+      { conn: "c5", type: "hello", reason: "room_full" },
+      { conn: "t3", type: "hello", reason: "screens_full" },
+    ]);
+    expect(JSON.stringify(h.rejects)).not.toMatch(/Zed|ana|SECRETKEY/i);
   });
 
   it("does not report accepted messages", () => {

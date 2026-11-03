@@ -265,6 +265,22 @@ export class RoomCore {
     return true;
   }
 
+  /** Lobby only: a disconnected non-host `kind` member is still inside its eviction grace, so a seat will free up. */
+  private seatFreeingSoon(kind: Member["kind"]): boolean {
+    return this.s.phase === "lobby" && this.s.members.some((x) => x.kind === kind && x.connId === null && x.id !== this.s.hostId);
+  }
+
+  /** Refusal text for a full room, with a hint to retry when a seat is only held by someone's grace period. */
+  private fullMessage(kind: Member["kind"]): string {
+    const base = kind === "player" ? `This room is full (${LIMITS.maxPlayers} players).` : `This room already has ${LIMITS.maxScreens} screens.`;
+    return this.seatFreeingSoon(kind) ? `${base} Someone just dropped out, so try again in a minute.` : base;
+  }
+
+  /** A hello was refused. Hellos carry names and keys, so only the reason is logged. */
+  private rejectHello(connId: string, reason: string): void {
+    this.out.reject?.({ conn: connId, type: "hello", reason });
+  }
+
   private memberByConn(connId: string): Member | undefined {
     return this.s.members.find((m) => m.connId === connId);
   }
@@ -275,11 +291,15 @@ export class RoomCore {
 
   private hello(connId: string, msg: HelloMessage, now: number): Handled {
     if (!this.s.created) {
+      this.rejectHello(connId, "room_not_found");
       this.error(connId, "ROOM_NOT_FOUND", "That room doesn't exist or has closed.");
       this.out.close(connId);
       return NO;
     }
-    if (this.memberByConn(connId)) return NO; // duplicate hello on one socket
+    if (this.memberByConn(connId)) {
+      this.rejectHello(connId, "duplicate_hello"); // one socket, one seat
+      return NO;
+    }
 
     let m: Member | null | undefined = msg.token
       ? this.s.members.find((x) => x.token === msg.token && x.kind === msg.role)
@@ -320,22 +340,26 @@ export class RoomCore {
     if (msg.role === "player") {
       name = cleanName(msg.name ?? "");
       if (!name) {
+        this.rejectHello(connId, "no_name");
         this.error(connId, "BAD_MESSAGE", "Pick a name first.");
         return null;
       }
       // Name check runs before any eviction so a rejected newcomer never costs anyone their seat.
       const lower = name.toLowerCase();
       if (this.s.members.some((p) => p.kind === "player" && p.name.toLowerCase() === lower)) {
+        this.rejectHello(connId, "name_taken");
         this.error(connId, "NAME_TAKEN", `Someone here is already called ${name}.`);
         return null;
       }
       if (!this.makeRoom("player", LIMITS.maxPlayers, now)) {
-        this.error(connId, "ROOM_FULL", `This room is full (${LIMITS.maxPlayers} players).`);
+        this.rejectHello(connId, "room_full");
+        this.error(connId, "ROOM_FULL", this.fullMessage("player"));
         this.out.close(connId);
         return null;
       }
     } else if (!this.makeRoom("screen", LIMITS.maxScreens, now)) {
-      this.error(connId, "SCREENS_FULL", `This room already has ${LIMITS.maxScreens} screens.`);
+      this.rejectHello(connId, "screens_full");
+      this.error(connId, "SCREENS_FULL", this.fullMessage("screen"));
       this.out.close(connId);
       return null;
     }
