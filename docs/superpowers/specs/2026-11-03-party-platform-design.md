@@ -70,6 +70,10 @@ interface GameModule<State, Action, Settings> {
 type Viewer = { kind: "screen" } | { kind: "player"; playerId: string };
 ```
 
+As built, the interface lives in `shared/src/game.ts`: `onAction` returns `{state, events?, quiet?}`,
+`onPlayerLeft` became `onPresence`, and there are `onSkip`, `parseSettings`, `parseAction`, `results`
+plus the optional hooks `sync`, `publicSettings`, `splitSave` and `joinSave`.
+
 `view()` is the only path for state to reach a client, so hidden information (the secret
 word, card hands, and so on) never leaves the server for viewers who shouldn't see it.
 
@@ -95,17 +99,19 @@ phone UIs without interrupting play.
 ### Protocol (WebSocket, JSON)
 
 Client → server:
-- `hello {token?, role, name?, avatar?}`
+- `hello {role, token?, hostKey?, name?, avatar?}`
 - `action {payload}`
 - `host {cmd: selectGame|updateSettings|start|skip|endGame|kick}`
+- `resync` — ask again for the game's full-picture event (throttled to once a second)
 
 Server → client:
 - `welcome {token, you}`
-- `room {players, screens, hostId, mode, phase, gameId, settings}`
-- `view {payload}`
+- `room {room: {code, players, screens, hostId, mode, phase, gameId, settings, lastResults, belowMin}, now}` — `settings` may be redacted per device (Doodle Dash hides custom words from all but a host phone)
+- `view {payload, now}`
+- `event {payload}` — game events (e.g. stroke ops), not part of the view
 - `error {code, message}`
 
-High-frequency data (drawing strokes) is relayed as `action` / `view` deltas (see §3).
+High-frequency data (drawing strokes) goes from `action` to `event` ops, never through `view` (see §3).
 Messages are validated with zod schemas in `shared/`.
 
 ### Identity and reconnection
@@ -152,10 +158,10 @@ Messages are validated with zod schemas in `shared/`.
 ### Real-time strokes
 
 - Coordinates are normalized to a 4:3 canvas (0–1).
-- The drawer batches points about every 40 ms: `stroke {id, color, size, tool, points[]}` (begin, append, end).
-- The room appends each batch to the turn's stroke list and relays it to all viewers.
-- Undo removes the last stroke and clear empties the list. Both are relayed as ops.
-- Late joiners and reconnects get the full stroke list in their `view` snapshot.
+- The drawer batches points about every 40 ms: `strokeBegin {id, tool, color, size, points}`, then `strokeAppend {id, points}`; also `fill {color, x, y}`, `undo`, `clear`.
+- The room appends each batch to the turn's stroke list and relays it to the other devices as a versioned op event (`begin`/`append`/`undo`/`clear`, each with `seq`).
+- Views carry only the stroke version and a shape signature. Late joiners and reconnects get the full list as a `sync {seq, strokes}` event; a client that sees a gap or mismatch sends `resync`.
+- Strokes are saved in chunks beside the room record, so a save after a guess doesn't rewrite the ink.
 
 ### Views
 
