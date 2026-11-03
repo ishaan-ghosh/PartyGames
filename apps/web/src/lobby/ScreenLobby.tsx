@@ -2,7 +2,7 @@ import type { HostCommand, RoomSnapshot } from "@party/shared";
 import { PlayerChip, playSound } from "@party/ui";
 import { QRCodeSVG } from "qrcode.react";
 import { Fragment, lazy, Suspense, useEffect, useRef, useState } from "react";
-import { kickablePlayers, pendingKick } from "../kick/kick";
+import { focusAfterKick, kickablePlayers, pendingKick } from "../kick/kick";
 import { KickChipButton, KickConfirmDialog } from "../kick/KickDialogs";
 import { ErrorBoundary } from "../lib/ErrorBoundary";
 import { publicOrigin } from "../lib/origin";
@@ -36,9 +36,22 @@ export function ScreenLobby({ room, youId, isHost, online, sendHost }: {
   const { target: kickTarget, stale: staleKick } = pendingKick(kickable, kickId);
   // The target left or we stopped being host: drop the pending confirm so it can't come back later.
   if (staleKick) setKickId(null);
+  // After a kick, focus moves off the soon-gone chip: to the next chip, else the previous, else the
+  // host panel (Start if it's enabled). A fresh object per kick, so the effect runs every time.
+  const chipRefs = useRef(new Map<string, HTMLButtonElement>());
+  const panelRef = useRef<HTMLElement>(null);
+  const [refocus, setRefocus] = useState<{ id: string | null } | null>(null);
+  useEffect(() => {
+    if (!refocus) return;
+    const panel = panelRef.current;
+    const el = (refocus.id ? chipRefs.current.get(refocus.id) : undefined)
+      ?? panel?.querySelector<HTMLElement>('[data-testid="start-game"]:not(:disabled)')
+      ?? panel?.querySelector<HTMLElement>(".host-panel button:not(:disabled)");
+    el?.focus();
+  }, [refocus]);
 
   return (
-    <div className="lobby-screen">
+    <div className={`lobby-screen${room.lastResults ? " has-results" : ""}`}>
       {showBackground() && (
         // Decorative: a failed chunk load (stale deploy) or a Canvas error must not blank the TV.
         <ErrorBoundary>
@@ -57,8 +70,12 @@ export function ScreenLobby({ room, youId, isHost, online, sendHost }: {
       </section>
       {/* Its own grid cell: under the QR on wide screens, so it never squeezes the host panel. */}
       {room.lastResults && <Results results={room.lastResults} />}
-      <section className="players-panel">
-        <h2>{count ? `${count} player${count === 1 ? "" : "s"} in` : "Waiting for players…"}</h2>
+      <section className="players-panel" ref={panelRef}>
+        <div className="players-head">
+          <h2>{count ? `${count} player${count === 1 ? "" : "s"} in` : "Waiting for players…"}</h2>
+          {/* Beside the heading, not under it, so it costs the one-screen lobby no height. */}
+          {kickable.length > 0 && <p className="lobby-kick-hint">Select a name to remove a player</p>}
+        </div>
         <div className="players-grid">
           {room.players.map((p) => {
             const chip = (
@@ -74,7 +91,16 @@ export function ScreenLobby({ room, youId, isHost, online, sendHost }: {
             return (
               <Fragment key={p.id}>
                 {kickable.some((k) => k.id === p.id) ? (
-                  <KickChipButton player={p} onClick={() => setKickId(p.id)}>{chip}</KickChipButton>
+                  <KickChipButton
+                    player={p}
+                    onClick={() => setKickId(p.id)}
+                    buttonRef={(el) => {
+                      if (el) chipRefs.current.set(p.id, el);
+                      else chipRefs.current.delete(p.id);
+                    }}
+                  >
+                    {chip}
+                  </KickChipButton>
                 ) : (
                   chip
                 )}
@@ -87,7 +113,10 @@ export function ScreenLobby({ room, youId, isHost, online, sendHost }: {
           <KickConfirmDialog
             player={kickTarget}
             online={online}
-            onKick={(playerId) => sendHost({ cmd: "kick", playerId })}
+            onKick={(playerId) => {
+              sendHost({ cmd: "kick", playerId });
+              setRefocus({ id: focusAfterKick(kickable.map((k) => k.id), playerId) });
+            }}
             onClose={() => setKickId(null)}
           />
         )}
