@@ -60,7 +60,7 @@ describe("observeRoom", () => {
     )).toEqual([null, "host"]);
   });
 
-  it("does not raise host when host passes to someone else, or you already were host", () => {
+  it("raises host only when it passes to you: not to someone else, nor again while you stay host", () => {
     expect(run(
       input({ room: snap({ hostId: "s1" }) }),
       input({ room: snap({ hostId: "p2" }) }),
