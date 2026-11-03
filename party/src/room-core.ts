@@ -60,6 +60,8 @@ export interface SavedRoom {
 export interface Handled { persist: boolean }
 const YES: Handled = { persist: true };
 const NO: Handled = { persist: false };
+/** At most one answered `resync` per member per this long. Clients retry less often than this. */
+export const RESYNC_MIN_MS = 1000;
 const DEFAULT_AVATAR: Avatar = { emoji: "🙂", color: "#7f5af0" };
 const CONTROL_OR_FORMAT = /[\p{Cc}\p{Cf}]/gu;
 /** Control/format characters except ZWJ (U+200D) and VS16 (U+FE0F), which emoji sequences need. */
@@ -82,6 +84,8 @@ function cleanAvatar(avatar: Avatar | undefined): Avatar {
 /** All room behavior, free of Cloudflare APIs. The Durable Object adapter feeds it messages and time. */
 export class RoomCore {
   private s: SavedRoom;
+  /** Last answered `resync` per member id (in memory only). */
+  private readonly lastResync = new Map<string, number>();
 
   constructor(
     code: string,
@@ -157,6 +161,7 @@ export class RoomCore {
       this.error(connId, "BAD_MESSAGE", "Say hello first.");
       return NO;
     }
+    if (msg.type === "resync") return this.resync(m, now);
     return msg.type === "action" ? this.action(m, msg.payload, now) : this.hostCmd(m, msg.cmd, now);
   }
 
@@ -298,7 +303,26 @@ export class RoomCore {
       this.checkOver(); // a reconnect can resume a paused game straight into its end
     }
     this.broadcast(now);
+    this.sendSync(m);
     return YES;
+  }
+
+  /** The game's full-picture event (GameModule.sync) to one member, if a game is running and has one. */
+  private sendSync(m: Member): void {
+    if (this.s.phase !== "playing" || !this.game.sync || !m.connId) return;
+    const viewer: Viewer = m.kind === "screen" ? { kind: "screen" } : { kind: "player", playerId: m.id };
+    const payload = this.game.sync(this.s.gameState, viewer);
+    if (payload != null) this.out.send(m.connId, { type: "event", payload });
+  }
+
+  /** A client asks for the sync event again. Throttled per member: the payload can be large. */
+  private resync(m: Member, now: number): Handled {
+    const last = this.lastResync.get(m.id);
+    if (last !== undefined && now - last < RESYNC_MIN_MS) return NO;
+    if (this.s.phase !== "playing" || !this.game.sync) return NO;
+    this.lastResync.set(m.id, now);
+    this.sendSync(m);
+    return NO;
   }
 
   private addMember(connId: string, msg: HelloMessage): Member | null {

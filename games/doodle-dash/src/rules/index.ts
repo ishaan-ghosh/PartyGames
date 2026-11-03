@@ -3,7 +3,7 @@ import { parseAction } from "./actions";
 import { handleGuess } from "./guess";
 import { onPresence } from "./presence";
 import { defaultSettings, parseSettings } from "./settings";
-import { handleStroke } from "./strokes";
+import { handleStroke, syncOp } from "./strokes";
 import { nextTimerAt, onChoose, onSkip, onTimer, setup } from "./turns";
 import type { DoodleAction, DoodleSettings, DoodleState } from "./types";
 import { view } from "./view";
@@ -41,6 +41,7 @@ export const doodleDash: GameModule<DoodleState, DoodleAction, DoodleSettings> =
   onPresence,
   onSkip,
   view,
+  sync: (s) => syncOp(s),
   isOver: (s) => s.phase === "over",
   results: (s) =>
     s.players
@@ -50,4 +51,5 @@ export const doodleDash: GameModule<DoodleState, DoodleAction, DoodleSettings> =
 
 export type { DoodleAction, DoodleSettings, DoodleState, Stroke, StrokeOp } from "./types";
 export type { DoodleView, ViewFeedItem } from "./view";
+export { EMPTY_SIG, strokeSignature } from "./strokes";
 export { BRUSH_SIZES, CHOOSE_MS, MAX_FILLS, MAX_POINTS_PER_BATCH, PALETTE, REVEAL_MS } from "./types";

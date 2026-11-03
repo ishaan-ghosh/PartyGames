@@ -37,13 +37,13 @@ const counter: GameModule<CState, CAction, { target: number }> = {
   results: (s) => s.players.map((id) => ({ playerId: id, name: s.names[id] ?? "?", score: s.count })),
 };
 
-function setup(opts: { created?: boolean } = {}) {
+function setup(opts: { created?: boolean; game?: GameModule<CState, CAction, { target: number }> } = {}) {
   const sent: { to: string; msg: ServerMsg }[] = [];
   const closed: string[] = [];
   /** Sends and closes in the order they happened, e.g. "send:c1:error" / "close:c1". */
   const log: string[] = [];
   let n = 0;
-  const deps: CoreDeps = { newId: () => `id${++n}`, newSeed: () => 7, games: { counter }, defaultGameId: "counter" };
+  const deps: CoreDeps = { newId: () => `id${++n}`, newSeed: () => 7, games: { counter: opts.game ?? counter }, defaultGameId: "counter" };
   const out: Outbox = {
     send: (to, msg) => {
       sent.push({ to, msg });
@@ -583,5 +583,63 @@ describe("RoomCore: name and avatar hygiene", () => {
     expect(players[0]!.avatar).toEqual({ emoji: family, color: "#112233" });
     expect(players[1]!.avatar.emoji).toBe("🙂");
     expect(players[1]!.avatar.color).toBe("#445566");
+  });
+});
+
+describe("RoomCore: game sync events", () => {
+  /** Counter whose `sync` returns the full count, tagged with who it was built for. */
+  const synced: GameModule<CState, CAction, { target: number }> = {
+    ...counter,
+    sync: (s, v) => ({ sync: s.count, for: v.kind === "screen" ? "screen" : v.playerId }),
+  };
+  const syncs = (h: ReturnType<typeof setup>, conn: string) =>
+    h.msgs(conn, "event").map((m) => (m as { payload: unknown }).payload).filter((p) => (p as { sync?: number }).sync !== undefined);
+  function startedSynced() {
+    const h = setup({ game: synced });
+    h.screen("s1", { hostKey: "HOSTKEY" });
+    h.player("c1", "Ana");
+    h.player("c2", "Ben");
+    h.host("s1", { cmd: "start" }, 0);
+    return h;
+  }
+
+  it("sends the sync event to a connection that joins or rejoins mid-game, after its view", () => {
+    const h = startedSynced();
+    expect(syncs(h, "c1")).toEqual([]); // starting a game sends none
+    h.core.message("c1", { type: "action", payload: { t: "inc" } }, 1);
+    const { token } = h.last("c1", "welcome")!;
+    h.core.disconnect("c1", 2);
+    h.log.length = 0;
+    h.core.message("c9", { type: "hello", role: "player", token }, 3);
+    expect(syncs(h, "c9")).toEqual([{ sync: 1, for: h.id("c9") }]);
+    expect(h.log.filter((l) => l.startsWith("send:c9"))).toEqual(["send:c9:welcome", "send:c9:room", "send:c9:view", "send:c9:event"]);
+    expect(syncs(h, "c2")).toEqual([]); // only the joiner
+    h.screen("s2", {}, 3);
+    expect(syncs(h, "s2")).toEqual([{ sync: 1, for: "screen" }]);
+  });
+
+  it("answers resync with the sync event to that connection only, at most once a second", () => {
+    const h = startedSynced();
+    expect(h.core.message("s1", { type: "resync" }, 100)).toEqual({ persist: false });
+    expect(syncs(h, "s1")).toEqual([{ sync: 0, for: "screen" }]);
+    expect(syncs(h, "c1")).toEqual([]);
+    h.core.message("s1", { type: "resync" }, 900);
+    expect(syncs(h, "s1")).toHaveLength(1);
+    h.core.message("s1", { type: "resync" }, 1100);
+    expect(syncs(h, "s1")).toHaveLength(2);
+    h.core.message("c1", { type: "resync" }, 1100); // throttled per connection
+    expect(syncs(h, "c1")).toEqual([{ sync: 0, for: h.id("c1") }]);
+  });
+
+  it("ignores resync in the lobby, before hello, and for games without sync", () => {
+    const h = setup({ game: synced });
+    h.core.message("c0", { type: "resync" }, 0);
+    expect(h.last("c0", "error")?.code).toBe("BAD_MESSAGE");
+    h.player("c1", "Ana");
+    h.core.message("c1", { type: "resync" }, 0);
+    expect(h.msgs("c1", "event")).toEqual([]);
+    const plain = started();
+    plain.core.message("c1", { type: "resync" }, 5000);
+    expect(plain.msgs("c1", "event")).toEqual([]);
   });
 });

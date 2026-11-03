@@ -25,6 +25,13 @@ export interface GameModule<S, A, Settings> {
   onPresence(state: S, playerId: string, connected: boolean, now: number): S;
   onSkip(state: S, now: number): S;
   view(state: S, viewer: Viewer): unknown;
+  /**
+   * Optional full-picture event for one viewer, for data too bulky to resend in every view (e.g. a
+   * drawing that otherwise streams as incremental events). The room sends it as an `event` to a
+   * connection when it (re)joins a game in progress and when that connection sends `resync`
+   * (throttled). Return null to send nothing.
+   */
+  sync?(state: S, viewer: Viewer): unknown;
   isOver(state: S): boolean;
   results(state: S): GameResult[];
 }

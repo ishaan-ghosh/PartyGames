@@ -14,7 +14,7 @@ export function DoodlePhone(p: GameClientProps<DoodleView>) {
   const send = (a: DoodleAction) => p.send(a);
   const role = view.you?.role ?? "spectator";
   const isDrawer = role === "drawer";
-  const [strokes, setStrokes, activity] = useStrokes(view, onEvent, isDrawer && view.phase === "drawing");
+  const [strokes, setStrokes, activity] = useStrokes(view, onEvent, isDrawer && view.phase === "drawing", p.resync);
   useDoodleSounds(view, p.soundOn, serverNow);
   const me = view.players.find((x) => x.id === p.you.id);
   const drawer = view.players.find((x) => x.id === view.drawerId);

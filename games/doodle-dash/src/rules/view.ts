@@ -1,6 +1,7 @@
 import type { Avatar, Viewer } from "@party/shared";
 import { isLetter, isMark } from "./chars";
-import { MAX_FILLS, VIEW_FEED_LIMIT, type Audience, type DoodleState, type FeedItem, type Phase, type Stroke } from "./types";
+import { strokeSignature } from "./strokes";
+import { MAX_FILLS, VIEW_FEED_LIMIT, type Audience, type DoodleState, type FeedItem, type Phase } from "./types";
 
 export type ViewFeedItem = Omit<FeedItem, "audience">;
 export interface DoodleView {
@@ -17,7 +18,8 @@ export interface DoodleView {
   choices: string[] | null;
   you: { id: string; role: "drawer" | "guesser" | "solver" | "spectator" } | null;
   feed: ViewFeedItem[];
-  strokes: Stroke[];
+  /** Stroke version and shape; the strokes themselves come on the stroke channel (StrokeOp). */
+  strokeSig: string;
   opSeq: number;
   /** True while the game is paused between turns waiting for players to (re)connect. */
   waiting?: boolean;
@@ -75,7 +77,7 @@ export function view(s: DoodleState, viewer: Viewer): DoodleView {
         ? null
         : { id: playerId, role: !inGame ? "spectator" : isDrawer ? "drawer" : solved ? "solver" : "guesser" },
     feed: s.feed.filter((f) => canSee(f.audience)).slice(-VIEW_FEED_LIMIT).map(({ audience: _hidden, ...rest }) => rest),
-    strokes: s.strokes,
+    strokeSig: strokeSignature(s.strokes),
     opSeq: s.opSeq,
     waiting: s.paused,
     ...(isDrawer && s.phase === "drawing" ? { fillsLeft: Math.max(0, MAX_FILLS - (s.fills ?? 0)) } : {}),

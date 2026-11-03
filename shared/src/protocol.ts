@@ -34,6 +34,8 @@ export const ClientMsg = z.discriminatedUnion("type", [
   }),
   z.object({ type: z.literal("action"), payload: z.unknown() }),
   z.object({ type: z.literal("host"), cmd: HostCmd }),
+  /** Asks for the game's full-picture event again (see GameModule.sync), e.g. after a missed event. */
+  z.object({ type: z.literal("resync") }),
 ]);
 export type ClientMessage = z.infer<typeof ClientMsg>;
 export type HelloMessage = Extract<ClientMessage, { type: "hello" }>;

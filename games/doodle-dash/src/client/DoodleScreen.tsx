@@ -9,7 +9,7 @@ export { phaseTotal } from "./phase";
 
 export function DoodleScreen(p: GameClientProps<DoodleView>) {
   const { view, serverNow, onEvent } = p;
-  const [strokes] = useStrokes(view, onEvent, false);
+  const [strokes] = useStrokes(view, onEvent, false, p.resync);
   useDoodleSounds(view, p.soundOn, serverNow);
   const drawer = view.players.find((x) => x.id === view.drawerId);
   return (

@@ -18,6 +18,9 @@ describe("ClientMsg", () => {
     expect(ok({ type: "host", cmd: { cmd: "kick", playerId: "p1" } })).toBe(true);
     expect(ok({ type: "host", cmd: { cmd: "selectGame", gameId: "doodle-dash" } })).toBe(true);
   });
+  it("accepts a resync request", () => {
+    expect(ok({ type: "resync" })).toBe(true);
+  });
   it("rejects garbage", () => {
     expect(ok(null)).toBe(false);
     expect(ok("hello")).toBe(false);
