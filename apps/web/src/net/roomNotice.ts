@@ -63,3 +63,39 @@ export function observeRoom(
   }
   return { baseline, notice };
 }
+
+/** How long a notice-worthy change must last before the phone hears about it (TV reloads take ~1-2 s). */
+export const NOTICE_HOLD_MS = 3000;
+
+/**
+ * Debounce state for room notices. `told` is the room as the player last heard it (or as it was when
+ * nothing worth saying changed); while a change away from it is pending, `due` is when it gets told.
+ */
+export interface NoticeTracker {
+  told: NoticeBaseline | null;
+  due: number | null;
+}
+
+export const NO_NOTICES: NoticeTracker = { told: null, due: null };
+
+/**
+ * observeRoom with a hold: a change is only announced once it has stood for NOTICE_HOLD_MS, and then
+ * as the net change since the player was last told (so a quick TV reload, or host bouncing TV → you →
+ * TV, says nothing). Every notice kind is held alike: the window starts at the first change and isn't
+ * extended by later ones, and it's cancelled as soon as the room is back to nothing worth saying.
+ * Call on every room update and again once `now >= due` (the caller owns the timer).
+ */
+export function trackNotice(
+  t: NoticeTracker,
+  s: NoticeInput,
+  now: number,
+): { tracker: NoticeTracker; notice: RoomNoticeKind | null } {
+  const { baseline, notice } = observeRoom(t.told, s);
+  // Not observable, or a fresh session: re-baseline and drop anything pending.
+  if (!baseline || !t.told || t.told.session !== baseline.session) return { tracker: { told: baseline, due: null }, notice: null };
+  // Nothing to say against what the player was told (incl. a change undone in time): move on.
+  if (!notice) return { tracker: { told: baseline, due: null }, notice: null };
+  const due = t.due ?? now + NOTICE_HOLD_MS;
+  if (now < due) return { tracker: { told: t.told, due }, notice: null };
+  return { tracker: { told: baseline, due: null }, notice };
+}
