@@ -1,7 +1,7 @@
 import { Button, TimerRing } from "@party/ui";
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type MouseEvent } from "react";
 import type { DoodleView, ViewFeedItem } from "../rules";
-import { anchoredScrollTop, hasNewItems, hasOwnNewItem, isNearBottom, pickAnchor, type ItemBox, type ScrollAnchor } from "./feedScroll";
+import { anchoredScrollTop, hasNewItems, hasOwnNewItem, isNearBottom, pickAnchor, shouldFocusFeedOnJump, type ItemBox, type ScrollAnchor } from "./feedScroll";
 import { timerFor } from "./phase";
 
 export function Hint({ hint, big = false }: { hint: string | null; big?: boolean }) {
@@ -145,9 +145,10 @@ export function Feed({ items, players, compact = false, alwaysFollow = false, yo
     if (atBottom.current) setUnseen(false);
   };
 
-  const jump = () => {
-    // The pill unmounts once we're at the bottom; keep focus in the feed rather than drop it to <body>.
-    ref.current?.focus({ preventScroll: true });
+  const jump = (e: MouseEvent<HTMLButtonElement>) => {
+    // The pill unmounts once we're at the bottom. If it had focus (keyboard), keep focus in the feed
+    // rather than drop it to <body>; otherwise leave it be, e.g. in the guess input (iOS keyboard).
+    if (shouldFocusFeedOnJump(document.activeElement, e.currentTarget)) ref.current?.focus({ preventScroll: true });
     toBottom();
   };
 
@@ -164,7 +165,9 @@ export function Feed({ items, players, compact = false, alwaysFollow = false, yo
         ))}
       </div>
       {unseen && (
-        <button type="button" className="dd-feed-jump" data-testid="feed-jump" aria-label="Jump to new messages" onClick={jump}>
+        <button type="button" className="dd-feed-jump" data-testid="feed-jump" aria-label="Jump to new messages"
+          // A tap or click mustn't take focus from the guess input (that closes the iOS keyboard).
+          onMouseDown={(e) => e.preventDefault()} onClick={jump}>
           <span aria-hidden>↓</span> New<span className="dd-feed-jump-more" aria-hidden> messages</span>
         </button>
       )}

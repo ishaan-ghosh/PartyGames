@@ -70,3 +70,12 @@ export function anchoredScrollTop(anchor: ScrollAnchor | null, items: readonly I
   const b = items.find((x) => x.id === anchor.id);
   return b ? Math.max(0, b.top - anchor.offset) : null;
 }
+
+/**
+ * Whether jumping via the "New messages" pill should move focus into the feed. Only when the pill
+ * itself had focus (a keyboard user): it unmounts once at the bottom, and focus would otherwise drop
+ * to <body>. Otherwise focus stays put, so a guesser typing in the input keeps their iOS keyboard.
+ */
+export function shouldFocusFeedOnJump(active: unknown, pill: unknown): boolean {
+  return pill != null && active === pill;
+}

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { NEAR_BOTTOM_PX, anchoredScrollTop, hasNewItems, hasOwnNewItem, isNearBottom, pickAnchor } from "./feedScroll";
+import { NEAR_BOTTOM_PX, anchoredScrollTop, hasNewItems, hasOwnNewItem, isNearBottom, pickAnchor, shouldFocusFeedOnJump } from "./feedScroll";
 
 const box = (scrollTop: number, scrollHeight = 1000, clientHeight = 200) => ({ scrollTop, scrollHeight, clientHeight });
 
@@ -98,5 +98,20 @@ describe("pickAnchor / anchoredScrollTop", () => {
 
   it("never asks for a negative scroll position", () => {
     expect(anchoredScrollTop({ id: 2, offset: 10 }, rows([2, 3]))).toBe(0);
+  });
+});
+
+describe("shouldFocusFeedOnJump", () => {
+  const pill = { name: "pill" };
+  const input = { name: "input" };
+
+  it("moves focus into the feed only when the pill had focus (keyboard activation)", () => {
+    expect(shouldFocusFeedOnJump(pill, pill)).toBe(true);
+  });
+
+  it("leaves focus where it is otherwise, e.g. in the guess input (keeps the iOS keyboard open)", () => {
+    expect(shouldFocusFeedOnJump(input, pill)).toBe(false);
+    expect(shouldFocusFeedOnJump(null, pill)).toBe(false);
+    expect(shouldFocusFeedOnJump(null, null)).toBe(false);
   });
 });
