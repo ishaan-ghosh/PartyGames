@@ -4,7 +4,16 @@ export const PALETTE = [
   "#1a1a2e", "#ffffff", "#9ca3af", "#ef4444", "#f97316", "#facc15",
   "#22c55e", "#14b8a6", "#3b82f6", "#8b5cf6", "#ec4899", "#92400e",
 ] as const;
-export const BRUSH_SIZES = [4, 10, 24] as const; // px on the 800×600 canvas
+/**
+ * The drawing's fixed bitmap: widescreen 16:9 on every device (TV, phones), so everyone sees the same
+ * picture. Strokes and fills are stored normalised (0–1), so this is client-side resolution only.
+ * 960×540 costs about what the old 800×600 did (≈8% more pixels to flood fill and redraw) and stays
+ * as sharp on a 1080p TV, where the canvas is ~1260 CSS px wide. doodle.css's --dd-ar must match.
+ */
+export const CANVAS_W = 960;
+export const CANVAS_H = 540;
+/** Brush widths in bitmap px: the old 4/10/24 on a 600px-tall canvas, scaled to keep the same size relative to the picture height. */
+export const BRUSH_SIZES = [3.6, 9, 21.6] as const;
 export const CHOOSE_MS = 15_000;
 export const REVEAL_MS = 5_000;
 export const DRAWER_GRACE_MS = 10_000;
