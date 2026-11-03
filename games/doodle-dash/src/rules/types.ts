@@ -11,6 +11,11 @@ export const DRAWER_GRACE_MS = 10_000;
 export const MAX_POINTS_PER_BATCH = 400; // numbers (x,y pairs × 2)
 export const INK_LIMIT = 120_000; // numbers per turn (keeps a max-ink view well under 1 MB)
 export const STROKE_COST = 10; // extra ink charged per strokeBegin/fill for per-object overhead
+/**
+ * Flood fills accepted per turn. Every viewer replays every fill on each full redraw (a whole-canvas
+ * flood each), so cheap-in-ink fills are capped separately. Undo and clear don't give fills back.
+ */
+export const MAX_FILLS = 60;
 export const FEED_KEEP = 60;
 export const VIEW_FEED_LIMIT = 30; // feed items sent to each viewer
 export const MIN_CONNECTED = 2; // players needed online to start the next turn
@@ -38,9 +43,14 @@ export type StrokeOp =
   | { op: "undo"; seq: number }
   | { op: "clear"; seq: number };
 
+/**
+ * `id` on strokeBegin/strokeAppend is the drawer client's own stroke id (0..2^31-1), not the server's
+ * Stroke.id: an append only extends the last stroke if that stroke was begun with the same id, so
+ * appends whose begin was lost (e.g. dropped across a reconnect) are refused instead of misattached.
+ */
 export type StrokeAction =
-  | { t: "strokeBegin"; tool: "pen" | "eraser"; color: number; size: number; points: number[] }
-  | { t: "strokeAppend"; points: number[] }
+  | { t: "strokeBegin"; id: number; tool: "pen" | "eraser"; color: number; size: number; points: number[] }
+  | { t: "strokeAppend"; id: number; points: number[] }
   | { t: "fill"; color: number; x: number; y: number }
   | { t: "undo" }
   | { t: "clear" };
@@ -69,7 +79,15 @@ export interface DoodleState {
   strokes: Stroke[];
   opSeq: number; // increases forever; clients drop stale ops
   nextStrokeId: number;
+  /**
+   * The drawer's id (`key`) for the last strokeBegin and the server stroke it created. Appends must
+   * name `key` and that stroke must still be last. Missing in states saved before stroke ids: appends
+   * are refused until the next begin.
+   */
+  openStroke: { key: number; strokeId: number } | null;
   ink: number; // numbers received this turn
+  /** Fills accepted this turn (see MAX_FILLS). Missing in states saved before the cap: read as 0. */
+  fills: number;
   feed: FeedItem[];
   nextFeedId: number;
   usedWords: string[];

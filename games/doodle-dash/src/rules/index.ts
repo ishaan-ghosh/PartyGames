@@ -50,4 +50,4 @@ export const doodleDash: GameModule<DoodleState, DoodleAction, DoodleSettings> =
 
 export type { DoodleAction, DoodleSettings, DoodleState, Stroke, StrokeOp } from "./types";
 export type { DoodleView, ViewFeedItem } from "./view";
-export { BRUSH_SIZES, CHOOSE_MS, MAX_POINTS_PER_BATCH, PALETTE, REVEAL_MS } from "./types";
+export { BRUSH_SIZES, CHOOSE_MS, MAX_FILLS, MAX_POINTS_PER_BATCH, PALETTE, REVEAL_MS } from "./types";
