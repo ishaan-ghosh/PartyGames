@@ -280,6 +280,30 @@ describe("RoomCore: host commands and games", () => {
     expect(h.core.serialize().gameState).toBeNull();
   });
 
+  it("rejects game ids that only exist on Object.prototype and keeps the room usable", () => {
+    const h = lobby();
+    h.host("s1", { cmd: "updateSettings", settings: { target: 5 } });
+    for (const gameId of ["constructor", "__proto__", "toString", "hasOwnProperty"]) {
+      expect(h.host("s1", { cmd: "selectGame", gameId })).toEqual({ persist: false });
+      expect(h.last("s1", "error")?.code).toBe("BAD_MESSAGE");
+      const saved = h.core.serialize();
+      expect(saved.gameId).toBe("counter");
+      expect(saved.settings).toEqual({ target: 5 });
+    }
+    h.host("s1", { cmd: "start" });
+    expect(h.last("c1", "room")!.room).toMatchObject({ phase: "playing", gameId: "counter" });
+  });
+
+  it("treats re-selecting the current game as a no-op that keeps custom settings", () => {
+    const h = lobby();
+    h.host("s1", { cmd: "updateSettings", settings: { target: 5 } });
+    const roomsBefore = h.msgs("c1", "room").length;
+    expect(h.host("s1", { cmd: "selectGame", gameId: "counter" })).toEqual({ persist: false });
+    expect(h.core.serialize().settings).toEqual({ target: 5 });
+    expect(h.msgs("c1", "room")).toHaveLength(roomsBefore);
+    expect(h.last("s1", "error")).toBeUndefined();
+  });
+
   it("kicks a player but never the host", () => {
     const h = lobby();
     h.host("s1", { cmd: "kick", playerId: h.id("c2") });
@@ -358,6 +382,33 @@ describe("RoomCore: host handoff and lifetime", () => {
     restored.message("n1", { type: "hello", role: "player", token }, 6000);
     expect(sent2.find((s) => s.to === "n1" && s.msg.type === "welcome")).toMatchObject({ msg: { you: { id: h.id("c1") } } });
     expect(sent2.filter((s) => s.to === "n1" && s.msg.type === "view").at(-1)?.msg).toMatchObject({ payload: { count: 1 } });
+  });
+
+  it("falls back to the default game in the lobby when the saved game isn't registered", () => {
+    for (const gameId of ["constructor", "removed-game"]) {
+      const h = started();
+      const t1 = h.last("c1", "welcome")!.token;
+      const t2 = h.last("c2", "welcome")!.token;
+      const saved = { ...h.core.serialize(), gameId, settings: { custom: true } };
+      const sent2: { to: string; msg: ServerMsg }[] = [];
+      const out2: Outbox = { send: (to, msg) => sent2.push({ to, msg }), close: () => {} };
+      const restored = new RoomCore("ABCD", h.deps, out2, { saved, now: 5000 });
+      expect(restored.serialize()).toMatchObject({
+        gameId: "counter",
+        settings: { target: 3 },
+        phase: "lobby",
+        gameState: null,
+        seated: [],
+      });
+      expect(restored.serialize().members).toHaveLength(3);
+      restored.message("n0", { type: "hello", role: "screen", hostKey: "HOSTKEY" }, 6000);
+      restored.message("n1", { type: "hello", role: "player", token: t1 }, 6000);
+      restored.message("n2", { type: "hello", role: "player", token: t2 }, 6000);
+      expect(sent2.find((s) => s.to === "n1" && s.msg.type === "welcome")).toMatchObject({ msg: { you: { id: h.id("c1") } } });
+      restored.message("n0", { type: "host", cmd: { cmd: "start" } }, 6000);
+      const room = sent2.filter((s) => s.to === "n1" && s.msg.type === "room").at(-1)!.msg as Extract<ServerMsg, { type: "room" }>;
+      expect(room.room).toMatchObject({ phase: "playing", gameId: "counter" });
+    }
   });
 });
 

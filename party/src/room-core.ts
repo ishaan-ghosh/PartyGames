@@ -96,6 +96,17 @@ export class RoomCore {
         if (m.connId !== null || typeof m.disconnectedAt !== "number") m.disconnectedAt = restore.now;
         m.connId = null;
       }
+      // The saved game may no longer be registered (removed in a later deploy, or a pre-fix prototype key
+      // like "constructor"): reopen in the lobby with the default game rather than crash on wake.
+      if (!Object.prototype.hasOwnProperty.call(deps.games, this.s.gameId)) {
+        const fallback = deps.games[deps.defaultGameId];
+        if (!fallback) throw new Error(`Unknown default game ${deps.defaultGameId}`);
+        this.s.gameId = deps.defaultGameId;
+        this.s.settings = fallback.defaultSettings;
+        this.s.phase = "lobby";
+        this.s.gameState = null;
+        this.s.seated = [];
+      }
       // Older saves lack seated; best effort is every player seat that existed.
       if (!Array.isArray(this.s.seated)) {
         this.s.seated = this.s.phase === "playing" ? this.s.members.filter((m) => m.kind === "player").map((m) => m.id) : [];
@@ -353,8 +364,14 @@ export class RoomCore {
     const s = this.s;
     switch (cmd.cmd) {
       case "selectGame": {
-        const game = this.deps.games[cmd.gameId];
-        if (s.phase !== "lobby" || !game) return NO;
+        if (s.phase !== "lobby") return NO;
+        // Own-property lookup: ids like "constructor" or "__proto__" must not resolve via Object.prototype.
+        const game = Object.prototype.hasOwnProperty.call(this.deps.games, cmd.gameId) ? this.deps.games[cmd.gameId] : undefined;
+        if (!game) {
+          this.error(m.connId!, "BAD_MESSAGE", "Unknown game.");
+          return NO;
+        }
+        if (cmd.gameId === s.gameId) return NO; // re-selecting keeps the host's custom settings
         s.gameId = cmd.gameId;
         s.settings = game.defaultSettings;
         break;

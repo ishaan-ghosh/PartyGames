@@ -1,6 +1,6 @@
 import type { HostCommand, RoomSnapshot } from "@party/shared";
 import { Button } from "@party/ui";
-import { clientGames } from "../games";
+import { getClientGame } from "../games";
 import { GameLibrary } from "./GameLibrary";
 
 /** `online` is false while the connection isn't welcomed: host commands would be dropped, so disable them. */
@@ -9,7 +9,7 @@ export function HostPanel({ room, sendHost, online }: {
   sendHost(cmd: HostCommand): void;
   online: boolean;
 }) {
-  const game = clientGames[room.gameId];
+  const game = getClientGame(room.gameId);
   const ready = room.players.filter((p) => p.connected).length;
   const min = game?.meta.minPlayers ?? 2;
   const missing = Math.max(0, min - ready);

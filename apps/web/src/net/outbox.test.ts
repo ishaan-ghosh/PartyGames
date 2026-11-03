@@ -30,21 +30,43 @@ describe("Outbox", () => {
     expect(sent).toEqual(["late"]);
   });
 
-  it("drops the oldest messages beyond the cap", () => {
+  it("drops the whole queue, and anything sent until the next welcome, once the cap overflows", () => {
     const { sent, transmit } = collect();
     const ob = new Outbox(transmit, 3);
-    for (const m of ["1", "2", "3", "4", "5"]) ob.send(m);
+    // e.g. strokeBegin, append, append, append: losing only the begin would graft the appends onto the previous stroke.
+    for (const m of ["begin", "a1", "a2", "a3", "a4"]) ob.send(m);
     ob.welcome();
-    expect(sent).toEqual(["3", "4", "5"]);
+    expect(sent).toEqual([]);
+    ob.send("after");
+    expect(sent).toEqual(["after"]);
   });
 
   it("defaults to a cap of 50", () => {
-    const { sent, transmit } = collect();
-    const ob = new Outbox(transmit);
-    for (let i = 0; i < 60; i++) ob.send(String(i));
+    const a = collect();
+    const full = new Outbox(a.transmit);
+    for (let i = 0; i < 50; i++) full.send(String(i));
+    full.welcome();
+    expect(a.sent).toHaveLength(50);
+    const b = collect();
+    const over = new Outbox(b.transmit);
+    for (let i = 0; i < 51; i++) over.send(String(i));
+    over.welcome();
+    expect(b.sent).toEqual([]);
+  });
+
+  it("drops the whole queue on overflow while welcomed but the transport is down", () => {
+    const sent: string[] = [];
+    let open = false;
+    const ob = new Outbox((m) => (open ? (sent.push(m), true) : false), 2);
     ob.welcome();
-    expect(sent).toHaveLength(50);
-    expect(sent[0]).toBe("10");
+    for (const m of ["begin", "a1", "a2", "a3"]) ob.send(m);
+    open = true;
+    ob.send("a4");
+    expect(sent).toEqual([]);
+    ob.welcome();
+    expect(sent).toEqual([]);
+    ob.send("next");
+    expect(sent).toEqual(["next"]);
   });
 
   it("discards queued messages on clear", () => {
@@ -70,16 +92,18 @@ describe("Outbox", () => {
 });
 
 describe("Outbox staleness", () => {
-  it("drops queued messages older than the time-to-live when flushed", () => {
+  it("drops the whole queue when any queued message is older than the time-to-live", () => {
     const { sent, transmit } = collect();
     let t = 0;
     const ob = new Outbox(transmit, 50, 2000, () => t);
-    ob.send("old");
+    ob.send("begin");
     t = 1500;
-    ob.send("fresh");
+    ob.send("append");
     t = 2500;
     ob.welcome();
-    expect(sent).toEqual(["fresh"]);
+    expect(sent).toEqual([]);
+    ob.send("next");
+    expect(sent).toEqual(["next"]);
   });
 
   it("keeps messages that are exactly at the time-to-live", () => {
@@ -99,9 +123,16 @@ describe("Outbox staleness", () => {
     ob.send("a");
     t = 1999;
     ob.send("b");
-    t = 3000;
+    t = 2000;
     ob.welcome();
-    expect(sent).toEqual(["b"]);
+    expect(sent).toEqual(["a", "b"]);
+    const c = collect();
+    let u = 0;
+    const late = new Outbox(c.transmit, 50, undefined, () => u);
+    late.send("a");
+    u = 2001;
+    late.welcome();
+    expect(c.sent).toEqual([]);
   });
 });
 
