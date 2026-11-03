@@ -128,3 +128,18 @@ html.dd-no-overscroll, html.dd-no-overscroll body { overscroll-behavior: none; }
 .dd-tool-badge { position: absolute; top: 2px; right: 2px; min-width: 20px; height: 20px; padding: 0 5px; border-radius: 999px; background: var(--warn); color: var(--bg); font: 700 0.75rem/20px var(--font-display); text-align: center; pointer-events: none; }
 .dd-tool:disabled { opacity: 0.45; cursor: not-allowed; }
 .dd-tool:disabled .dd-tool-badge { background: var(--bad); color: var(--text); }
+
+/*
+ * ---- Drawer on a sideways phone: ask to rotate ----
+ * Landscape leaves the canvas ~140×105 px. Only short screens (phones) get the hint; tablets and
+ * laptops are taller than 500 px. Sits below the shell's host bar and mute toggle (z-index 40).
+ */
+.dd-rotate { display: none; }
+@media (orientation: landscape) and (max-height: 500px) {
+  .dd-rotate { position: fixed; inset: 0; z-index: 30; display: grid; place-content: center; justify-items: center; gap: var(--space-4); padding: var(--space-5); text-align: center; background: var(--bg); color: var(--text); animation: dd-fade 0.3s ease-out; }
+  .dd-rotate-icon { font-size: 4rem; line-height: 1; color: var(--game-accent); }
+  .dd-rotate-text { margin: 0; max-width: 18ch; font: 700 clamp(1.6rem, 6vh, 2.4rem)/1.2 var(--font-display); }
+}
+@media (orientation: landscape) and (max-height: 500px) and (prefers-reduced-motion: reduce) {
+  .dd-rotate { animation: none; }
+}
