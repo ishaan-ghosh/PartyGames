@@ -2,6 +2,7 @@ import { LIMITS, type ServerMsg } from "@party/shared";
 import { Server, type Connection, type WSMessage } from "partyserver";
 import type { Env } from "./env";
 import { DEFAULT_GAME_ID, games } from "./games";
+import { RejectLog } from "./rate-limit";
 import { RoomCore, type SavedRoom } from "./room-core";
 
 const KEY = "room";
@@ -20,6 +21,11 @@ function frameBytes(message: WSMessage): number {
 export class Room extends Server<Env> {
   private core!: RoomCore;
   private scheduled: number | null = null;
+  private rejects?: RejectLog;
+
+  private get rejectLog(): RejectLog {
+    return (this.rejects ??= new RejectLog(this.name));
+  }
 
   async onStart() {
     const saved = await this.ctx.storage.get<SavedRoom>(KEY);
@@ -50,6 +56,7 @@ export class Room extends Server<Env> {
       {
         send: (id, msg) => this.getConnection(id)?.send(JSON.stringify(msg)),
         close: (id) => this.getConnection(id)?.close(4000, "closed by room"),
+        reject: (r) => this.rejectLog.log(r, Date.now()),
       },
       saved ? { saved, now: Date.now() } : undefined,
     );
@@ -67,6 +74,7 @@ export class Room extends Server<Env> {
 
   onMessage(conn: Connection, message: WSMessage) {
     if (frameBytes(message) > MAX_FRAME_BYTES) {
+      this.rejectLog.log({ conn: conn.id, type: "?", reason: "too_large" }, Date.now());
       const err: ServerMsg = { type: "error", code: "BAD_MESSAGE", message: "Message too large." };
       conn.send(JSON.stringify(err));
       return;

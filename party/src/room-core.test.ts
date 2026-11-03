@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { GameModule, ServerMsg } from "@party/shared";
+import type { Rejection } from "./rate-limit";
 import { RoomCore, type CoreDeps, type Outbox } from "./room-core";
 
 interface CState { count: number; target: number; endsAt: number | null; players: string[]; names: Record<string, string>; presence: Record<string, boolean> }
@@ -42,6 +43,7 @@ function setup(opts: { created?: boolean } = {}) {
   const closed: string[] = [];
   /** Sends and closes in the order they happened, e.g. "send:c1:error" / "close:c1". */
   const log: string[] = [];
+  const rejects: Rejection[] = [];
   let n = 0;
   const deps: CoreDeps = { newId: () => `id${++n}`, newSeed: () => 7, games: { counter }, defaultGameId: "counter" };
   const out: Outbox = {
@@ -53,6 +55,7 @@ function setup(opts: { created?: boolean } = {}) {
       closed.push(c);
       log.push(`close:${c}`);
     },
+    reject: (r) => rejects.push(r),
   };
   const core = new RoomCore("ABCD", deps, out);
   if (opts.created !== false) core.create("HOSTKEY", 0);
@@ -66,7 +69,7 @@ function setup(opts: { created?: boolean } = {}) {
   const screen = (conn: string, extra: Record<string, unknown> = {}, now = 0) =>
     core.message(conn, { type: "hello", role: "screen", ...extra }, now);
   const host = (conn: string, cmd: object, now = 0) => core.message(conn, { type: "host", cmd }, now);
-  return { core, sent, closed, log, msgs, last, id, player, screen, host, deps };
+  return { core, sent, closed, log, rejects, msgs, last, id, player, screen, host, deps };
 }
 
 /** Screen s1 is host (has the host key); Ana (c1) and Ben (c2) are in the lobby. */
@@ -583,5 +586,55 @@ describe("RoomCore: name and avatar hygiene", () => {
     expect(players[0]!.avatar).toEqual({ emoji: family, color: "#112233" });
     expect(players[1]!.avatar.emoji).toBe("🙂");
     expect(players[1]!.avatar.color).toBe("#445566");
+  });
+});
+
+describe("RoomCore: logging rejected messages", () => {
+  it("reports unparseable messages with only a sanitized type label", () => {
+    const h = setup();
+    h.core.message("c1", { type: "bogus", secret: "my password" }, 0);
+    h.core.message("c2", { type: "has spaces and stuff" }, 0);
+    h.core.message("c3", null, 0);
+    expect(h.rejects).toEqual([
+      { conn: "c1", type: "bogus", reason: "bad_message" },
+      { conn: "c2", type: "?", reason: "bad_message" },
+      { conn: "c3", type: "?", reason: "bad_message" },
+    ]);
+    expect(JSON.stringify(h.rejects)).not.toContain("password");
+  });
+
+  it("reports messages before hello", () => {
+    const h = setup();
+    h.core.message("c1", { type: "action", payload: { t: "inc" } }, 0);
+    expect(h.rejects).toEqual([{ conn: "c1", type: "action", reason: "no_hello" }]);
+  });
+
+  it("reports host commands from non-hosts and unknown games, with the player id", () => {
+    const h = lobby();
+    h.host("c1", { cmd: "kick", playerId: h.id("c2") });
+    h.host("s1", { cmd: "selectGame", gameId: "nope" });
+    expect(h.rejects).toEqual([
+      { conn: "c1", player: h.id("c1"), type: "host:kick", reason: "not_host" },
+      { conn: "s1", player: h.id("s1"), type: "host:selectGame", reason: "unknown_game" },
+    ]);
+  });
+
+  it("reports actions the game module refuses to parse, and actions outside play", () => {
+    const h = lobby();
+    h.core.message("c1", { type: "action", payload: { t: "inc" } }, 0);
+    h.host("s1", { cmd: "start" });
+    h.core.message("c1", { type: "action", payload: { t: "nope", text: "hidden" } }, 0);
+    h.core.message("s1", { type: "action", payload: { t: "inc" } }, 0);
+    expect(h.rejects).toEqual([
+      { conn: "c1", player: h.id("c1"), type: "action:inc", reason: "not_playing" },
+      { conn: "c1", player: h.id("c1"), type: "action:nope", reason: "bad_action" },
+      { conn: "s1", player: h.id("s1"), type: "action:inc", reason: "not_a_player" },
+    ]);
+  });
+
+  it("does not report accepted messages", () => {
+    const h = started();
+    h.core.message("c1", { type: "action", payload: { t: "inc" } }, 0);
+    expect(h.rejects).toEqual([]);
   });
 });

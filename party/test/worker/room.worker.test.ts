@@ -52,6 +52,23 @@ describe("worker", () => {
     ws.close();
   });
 
+  it("logs rejected messages as one structured warn line without the message body", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const { code } = await createRoom();
+      const { ws, messages } = await open(code);
+      ws.send(JSON.stringify({ type: "action", payload: { t: "guess", text: "secret words" } }));
+      await vi.waitFor(() => expect(messages[0]).toMatchObject({ type: "error", code: "BAD_MESSAGE" }));
+      const lines = warn.mock.calls.map((c) => String(c[0])).filter((l) => l.includes(`"room":"${code}"`));
+      expect(lines).toHaveLength(1);
+      expect(JSON.parse(lines[0]!)).toMatchObject({ ev: "reject", room: code, type: "action", reason: "no_hello" });
+      expect(lines[0]).not.toContain("secret");
+      ws.close();
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
   it("answers oversized frames with BAD_MESSAGE without parsing them and keeps the room usable", async () => {
     const { code } = await createRoom();
     const { ws, messages } = await open(code);

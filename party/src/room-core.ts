@@ -12,10 +12,13 @@ import {
   type ServerMsg,
   type Viewer,
 } from "@party/shared";
+import { label, type Rejection } from "./rate-limit";
 
 export interface Outbox {
   send(connId: string, msg: ServerMsg): void;
   close(connId: string): void;
+  /** A client message was refused (spec §5: invalid actions are logged). Carries no message bodies. */
+  reject?(r: Rejection): void;
 }
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export type AnyGame = GameModule<any, any, any>;
@@ -147,6 +150,7 @@ export class RoomCore {
   message(connId: string, raw: unknown, now: number): Handled {
     const parsed = ClientMsg.safeParse(raw);
     if (!parsed.success) {
+      this.out.reject?.({ conn: connId, type: label((raw as { type?: unknown } | null)?.type), reason: "bad_message" });
       this.error(connId, "BAD_MESSAGE", "Unrecognized message.");
       return NO;
     }
@@ -154,6 +158,7 @@ export class RoomCore {
     if (msg.type === "hello") return this.hello(connId, msg, now);
     const m = this.memberByConn(connId);
     if (!m) {
+      this.out.reject?.({ conn: connId, type: msg.type, reason: "no_hello" });
       this.error(connId, "BAD_MESSAGE", "Say hello first.");
       return NO;
     }
@@ -340,9 +345,21 @@ export class RoomCore {
   }
 
   private action(m: Member, payload: unknown, now: number): Handled {
-    if (this.s.phase !== "playing" || m.kind !== "player") return NO;
+    const reject = (reason: string) =>
+      this.out.reject?.({ conn: m.connId!, player: m.id, type: `action:${label((payload as { t?: unknown } | null)?.t)}`, reason });
+    if (this.s.phase !== "playing") {
+      reject("not_playing");
+      return NO;
+    }
+    if (m.kind !== "player") {
+      reject("not_a_player");
+      return NO;
+    }
     const action = this.game.parseAction(payload);
-    if (action === null) return NO;
+    if (action === null) {
+      reject("bad_action");
+      return NO;
+    }
     const res = this.game.onAction(this.s.gameState, m.id, action, now);
     this.s.gameState = res.state;
     for (const ev of res.events ?? []) {
@@ -357,7 +374,9 @@ export class RoomCore {
   }
 
   private hostCmd(m: Member, cmd: HostCommand, now: number): Handled {
+    const reject = (reason: string) => this.out.reject?.({ conn: m.connId!, player: m.id, type: `host:${cmd.cmd}`, reason });
     if (m.id !== this.s.hostId) {
+      reject("not_host");
       this.error(m.connId!, "NOT_HOST", "Only the host can do that.");
       return NO;
     }
@@ -368,6 +387,7 @@ export class RoomCore {
         // Own-property lookup: ids like "constructor" or "__proto__" must not resolve via Object.prototype.
         const game = Object.prototype.hasOwnProperty.call(this.deps.games, cmd.gameId) ? this.deps.games[cmd.gameId] : undefined;
         if (!game) {
+          reject("unknown_game");
           this.error(m.connId!, "BAD_MESSAGE", "Unknown game.");
           return NO;
         }
