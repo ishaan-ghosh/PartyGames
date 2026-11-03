@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type Dispatch, type PointerEvent, type SetStateAction } from "react";
 import { BRUSH_SIZES, PALETTE, type DoodleAction, type Stroke } from "../rules";
 import { CanvasView } from "./CanvasView";
-import { chunkPoints, normalizePoint } from "./strokes";
+import { chunkPoints, fillBadge, fillsRemaining, firstStrokeKey, nextStrokeKey, normalizePoint } from "./strokes";
 import type { ActivityRef } from "./useStrokes";
 
 type Tool = "pen" | "eraser" | "fill";
@@ -23,20 +23,28 @@ interface PadIO {
   end(): void;
 }
 
-export function DrawPad({ strokes, setStrokes, send, activity }: {
+export function DrawPad({ strokes, setStrokes, send, activity, fillsLeft: serverFillsLeft }: {
   strokes: Stroke[];
   setStrokes: Dispatch<SetStateAction<Stroke[]>>;
   send(action: DoodleAction): void;
   /** Shared with useStrokes so it only resyncs from the server while the pad is idle. */
   activity: ActivityRef;
+  /** The view's `fillsLeft` (stale while drawing; see fillsRemaining). */
+  fillsLeft?: number;
 }) {
   const [tool, setTool] = useState<Tool>("pen");
   const [color, setColor] = useState(0);
   const [size, setSize] = useState(1);
+  const [fillsSent, setFillsSent] = useState(0); // this pad is mounted for one drawing turn
+  const fillsLeft = fillsRemaining(serverFillsLeft, fillsSent);
+  const fillsBadge = fillBadge(fillsLeft);
   const pointer = useRef<number | null>(null); // the one pointer currently drawing
   const pending = useRef<number[]>([]);
   const last = useRef<[number, number]>([0, 0]);
   const localId = useRef(-1); // negative ids never collide with server ids
+  // The id sent with strokeBegin and every strokeAppend of the current stroke, so the server
+  // can refuse appends whose begin was lost. Not the local (negative) or server stroke id.
+  const strokeKey = useRef<number | null>(null);
   // The parent passes a fresh `send` every render; keep the batching timer independent of that.
   const sendRef = useRef(send);
   sendRef.current = send;
@@ -50,7 +58,8 @@ export function DrawPad({ strokes, setStrokes, send, activity }: {
       if (pending.current.length) {
         const batches = chunkPoints(pending.current);
         pending.current = [];
-        for (const points of batches) io.send({ t: "strokeAppend", points });
+        const id = strokeKey.current;
+        if (id !== null) for (const points of batches) io.send({ t: "strokeAppend", id, points });
       }
       activity.current.pendingPoints = 0;
     },
@@ -77,6 +86,11 @@ export function DrawPad({ strokes, setStrokes, send, activity }: {
     };
   }, [io]);
 
+  // Out of fills: drop back to the pen so the next tap draws instead of doing nothing.
+  useEffect(() => {
+    if (tool === "fill" && fillsLeft <= 0) setTool("pen");
+  }, [tool, fillsLeft]);
+
   // No pull-to-refresh or rubber-band scrolling on the page while this pad is on screen.
   useEffect(() => {
     const root = document.documentElement;
@@ -98,6 +112,8 @@ export function DrawPad({ strokes, setStrokes, send, activity }: {
     io.flush();
     const [x, y] = pos(e);
     if (tool === "fill") {
+      if (fillsLeft <= 0) return; // the server would refuse it
+      setFillsSent((n) => n + 1);
       io.send({ t: "fill", color, x, y });
       setStrokes((s) => [...s, { id: localId.current--, tool: "fill", color, x, y }]);
       return;
@@ -107,7 +123,9 @@ export function DrawPad({ strokes, setStrokes, send, activity }: {
     activity.current.drawing = true;
     last.current = [x, y];
     const id = localId.current--;
-    io.send({ t: "strokeBegin", tool, color, size, points: [x, y] });
+    const key = strokeKey.current === null ? firstStrokeKey() : nextStrokeKey(strokeKey.current);
+    strokeKey.current = key;
+    io.send({ t: "strokeBegin", id: key, tool, color, size, points: [x, y] });
     setStrokes((s) => [...s, { id, tool, color, size, points: [x, y] }]);
   };
 
@@ -137,6 +155,11 @@ export function DrawPad({ strokes, setStrokes, send, activity }: {
 
   return (
     <div className="dd-pad">
+      {/* Always rendered; doodle.css only shows it on a short landscape screen (a sideways phone). */}
+      <div className="dd-rotate" role="status" data-testid="rotate-hint">
+        <span className="dd-rotate-icon" aria-hidden>📱↻</span>
+        <p className="dd-rotate-text">Turn your phone upright to draw</p>
+      </div>
       <div className="dd-canvas-cell">
         <CanvasView
           strokes={strokes}
@@ -169,11 +192,29 @@ export function DrawPad({ strokes, setStrokes, send, activity }: {
         ))}
       </div>
       <div className="dd-toolrow">
-        {TOOLS.map(({ tool: t, icon, label }) => (
-          <button key={t} type="button" aria-label={label} aria-pressed={tool === t} className={`dd-tool ${tool === t ? "on" : ""}`} onClick={() => setTool(t)}>
-            <span aria-hidden>{icon}</span>
-          </button>
-        ))}
+        {TOOLS.map(({ tool: t, icon, label }) => {
+          const isFill = t === "fill";
+          const usedUp = isFill && fillsLeft <= 0;
+          const badge = isFill ? fillsBadge : null;
+          return (
+            <button
+              key={t}
+              type="button"
+              aria-label={badge === null ? label : `${label}, ${fillsLeft} left`}
+              title={isFill ? (usedUp ? "No fills left this turn" : badge !== null ? `${fillsLeft} fills left` : undefined) : undefined}
+              aria-pressed={tool === t}
+              aria-disabled={usedUp || undefined}
+              disabled={usedUp}
+              className={`dd-tool ${tool === t ? "on" : ""}${badge !== null ? " dd-tool-counted" : ""}`}
+              onClick={() => {
+                if (!usedUp) setTool(t);
+              }}
+            >
+              <span aria-hidden>{icon}</span>
+              {badge !== null && <span className="dd-tool-badge" aria-hidden data-testid="fill-count">{badge}</span>}
+            </button>
+          );
+        })}
         <button
           type="button"
           className="dd-size"

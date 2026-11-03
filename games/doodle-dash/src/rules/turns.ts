@@ -51,7 +51,9 @@ export function setup(players: PlayerInfo[], settings: DoodleSettings, seed: num
     strokes: [],
     opSeq: 0,
     nextStrokeId: 1,
+    openStroke: null,
     ink: 0,
+    fills: 0,
     feed: [],
     nextFeedId: 1,
     usedWords: [],
@@ -106,7 +108,9 @@ export function startTurn(s: DoodleState, now: number): DoodleState {
   s.solvers = [];
   s.turnPoints = {};
   s.strokes = [];
+  s.openStroke = null;
   s.ink = 0;
+  s.fills = 0;
   s.drawerGoneAt = null;
   pushFeed(s, { kind: "system", playerId: null, text: `${nameOf(s, drawerId)} is choosing a word`, audience: "all" });
   return s;

@@ -1,6 +1,6 @@
 import type { Avatar, Viewer } from "@party/shared";
 import { isLetter, isMark } from "./chars";
-import { VIEW_FEED_LIMIT, type Audience, type DoodleState, type FeedItem, type Phase, type Stroke } from "./types";
+import { MAX_FILLS, VIEW_FEED_LIMIT, type Audience, type DoodleState, type FeedItem, type Phase, type Stroke } from "./types";
 
 export type ViewFeedItem = Omit<FeedItem, "audience">;
 export interface DoodleView {
@@ -21,6 +21,8 @@ export interface DoodleView {
   opSeq: number;
   /** True while the game is paused between turns waiting for players to (re)connect. */
   waiting?: boolean;
+  /** Drawer only, while drawing: flood fills still allowed this turn (see MAX_FILLS). */
+  fillsLeft?: number;
 }
 
 export function makeHint(word: string, revealed: number[]): string {
@@ -76,5 +78,6 @@ export function view(s: DoodleState, viewer: Viewer): DoodleView {
     strokes: s.strokes,
     opSeq: s.opSeq,
     waiting: s.paused,
+    ...(isDrawer && s.phase === "drawing" ? { fillsLeft: Math.max(0, MAX_FILLS - (s.fills ?? 0)) } : {}),
   };
 }
