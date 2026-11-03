@@ -44,9 +44,11 @@ export function HostBar({ room, youId, onSkip, onEnd, onKick, disabled = false, 
           type="button"
           data-testid="host-players"
           aria-haspopup="dialog"
+          aria-label="Players"
           onClick={() => setShowPlayers(true)}
         >
-          👥 Players
+          {/* Icon-only on narrow phones, so the bar stays clear of the mute toggle. */}
+          <span aria-hidden="true">👥</span> <span className="host-bar-label">Players</span>
         </button>
       </div>
       {/* Outside the bar, so its dimming and `.host-bar button` styles don't reach the dialog. */}

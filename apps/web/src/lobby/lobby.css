@@ -36,6 +36,12 @@
 .host-bar button { min-height: 48px; padding: 0 var(--space-4); border-radius: 999px; border: 0; background: var(--bg-raised-2); color: var(--text); font: 600 0.95rem var(--font-display); cursor: pointer; }
 .host-bar button:disabled { opacity: 0.45; cursor: not-allowed; }
 .host-bar button:focus-visible { outline: 3px solid var(--focus); outline-offset: 3px; }
+/* Narrow phones: three labelled buttons would run into the mute toggle (bottom-right), so Players
+   goes icon-only (its name stays via aria-label) and padding tightens. */
+@media (max-width: 360px) {
+  .host-bar button { min-width: 48px; padding: 0 var(--space-3); }
+  .host-bar-label { position: absolute; width: 1px; height: 1px; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+}
 @media (max-width: 900px) {
   .lobby-screen { grid-template-columns: 1fr; }
   .code-panel { position: static; }
