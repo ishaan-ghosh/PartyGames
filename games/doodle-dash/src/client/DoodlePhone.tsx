@@ -64,7 +64,7 @@ export function DoodlePhone(p: GameClientProps<DoodleView>) {
       <div className={`phone dd-phone dd-phone-draw${withFeed ? " dd-phone-draw-feed" : ""}`}>
         {header}
         <p className="dd-secret" ref={secretRef}><span className="dd-secret-label">Draw: </span><strong data-testid="secret-word">{view.word}</strong></p>
-        {withFeed && <Feed items={view.feed} players={view.players} compact />}
+        {withFeed && <Feed items={view.feed} players={view.players} compact youId={p.you.id} />}
         <DrawPad strokes={strokes} setStrokes={setStrokes} send={send} activity={activity} fillsLeft={view.fillsLeft} />
       </div>
     );
@@ -87,7 +87,7 @@ export function DoodlePhone(p: GameClientProps<DoodleView>) {
       )}
       {view.phase === "drawing" && <Hint hint={view.hint} />}
       {solved && view.phase === "drawing" && <div className="dd-solved">✅ You got it! +{me?.turnPoints ?? 0}</div>}
-      <Feed items={view.feed} players={view.players} compact />
+      <Feed items={view.feed} players={view.players} compact youId={p.you.id} />
       {!isDrawer && <GuessForm placeholder={solved ? "Chat with players who got it" : "Type your guess"} onSubmit={(text) => send({ t: "guess", text })} />}
     </div>
   );

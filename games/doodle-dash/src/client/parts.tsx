@@ -1,7 +1,7 @@
 import { Button, TimerRing } from "@party/ui";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { DoodleView, ViewFeedItem } from "../rules";
-import { hasNewItems, isNearBottom } from "./feedScroll";
+import { anchoredScrollTop, hasNewItems, hasOwnNewItem, isNearBottom, pickAnchor, type ItemBox, type ScrollAnchor } from "./feedScroll";
 import { timerFor } from "./phase";
 
 export function Hint({ hint, big = false }: { hint: string | null; big?: boolean }) {
@@ -45,21 +45,38 @@ export function Waiting({ view, overlay = false }: { view: DoodleView; overlay?:
   );
 }
 
+/** Item boxes in the scroll container's content coordinates, for keeping a reader's place. */
+function measureItems(el: HTMLElement, list: HTMLElement): ItemBox[] {
+  const base = el.getBoundingClientRect().top - el.scrollTop;
+  return Array.from(list.children as HTMLCollectionOf<HTMLElement>).map((c) => {
+    const r = c.getBoundingClientRect();
+    return { id: Number(c.dataset.id), top: r.top - base, height: r.height };
+  });
+}
+
 /**
  * The guess feed. It sticks to the bottom: new items and resizes keep the newest item in view only
- * while the reader is at the bottom; once they scroll up, their position is kept and a "New
- * messages" pill offers a jump back. `alwaysFollow` (the TV, which nobody scrolls) always follows.
+ * while the reader is at the bottom. Once they scroll up, their place is kept (by hand: iOS Safari
+ * has no scroll anchoring, and the view trims the oldest item as each new one arrives) and a "New
+ * messages" pill offers a jump back. The viewer's own new items (`youId`) always bring them down.
+ * `alwaysFollow` (the TV, which nobody scrolls) always follows.
  */
-export function Feed({ items, players, compact = false, alwaysFollow = false }: {
+export function Feed({ items, players, compact = false, alwaysFollow = false, youId = null }: {
   items: ViewFeedItem[];
   players: DoodleView["players"];
   compact?: boolean;
   alwaysFollow?: boolean;
+  youId?: string | null;
 }) {
   const ref = useRef<HTMLDivElement>(null);
+  const listRef = useRef<HTMLDivElement>(null);
   // Whether the reader was at the bottom as of the last scroll; measured before content changes,
   // so it says where they were, not where the new content leaves them.
   const atBottom = useRef(true);
+  // Where a scrolled-up reader is, also as of before the change: re-applied after it.
+  const anchor = useRef<ScrollAnchor | null>(null);
+  // The scrollTop our last place-keeping fix-up set, to recognise its scroll event.
+  const fixUpTop = useRef<number | null>(null);
   const lastSeenId = useRef<number | null>(null);
   const [unseen, setUnseen] = useState(false);
 
@@ -69,46 +86,86 @@ export function Feed({ items, players, compact = false, alwaysFollow = false }: 
     el.scrollTop = el.scrollHeight;
     // The resulting scroll event lands at the bottom too, so it can't mark the reader as scrolled up.
     atBottom.current = true;
+    anchor.current = null;
     setUnseen(false);
   }, []);
 
-  useLayoutEffect(() => {
-    const fresh = hasNewItems(lastSeenId.current, items);
-    lastSeenId.current = items.length ? items[items.length - 1]!.id : null;
-    if (alwaysFollow || atBottom.current) toBottom();
-    else if (fresh) setUnseen(true);
-  }, [items, alwaysFollow, toBottom]);
+  /**
+   * Puts a scrolled-up reader's top item back where it was. The anchor is kept as recorded (not
+   * re-measured after each fix-up), so scrollTop rounding can't accumulate into a drift; it's only
+   * re-picked when its item is gone.
+   */
+  const holdPlace = useCallback(() => {
+    const el = ref.current;
+    const list = listRef.current;
+    if (!el || !list) return;
+    const top = anchoredScrollTop(anchor.current, measureItems(el, list));
+    if (top === null) anchor.current = pickAnchor(measureItems(el, list), el.scrollTop);
+    else if (Math.abs(el.scrollTop - top) >= 0.5) {
+      el.scrollTop = top;
+      fixUpTop.current = el.scrollTop; // as the browser rounded it
+    }
+  }, []);
 
-  // Keep the newest item in view when the feed is resized (e.g. the phone is rotated), if following.
+  useLayoutEffect(() => {
+    const el = ref.current;
+    const fresh = hasNewItems(lastSeenId.current, items);
+    const own = hasOwnNewItem(lastSeenId.current, items, youId);
+    lastSeenId.current = items.length ? items[items.length - 1]!.id : null;
+    const fits = !!el && el.scrollHeight <= el.clientHeight;
+    if (alwaysFollow || atBottom.current || own || fits) toBottom();
+    else {
+      holdPlace();
+      if (fresh) setUnseen(true);
+    }
+  }, [items, alwaysFollow, youId, toBottom, holdPlace]);
+
+  // On resize (e.g. the phone is rotated): keep the newest item in view if following, else the reader's place.
   useEffect(() => {
     const el = ref.current;
     if (!el || typeof ResizeObserver === "undefined") return;
     const ro = new ResizeObserver(() => {
       if (alwaysFollow || atBottom.current) toBottom();
+      else holdPlace();
     });
     ro.observe(el);
     return () => ro.disconnect();
-  }, [alwaysFollow, toBottom]);
+  }, [alwaysFollow, toBottom, holdPlace]);
 
   const onScroll = () => {
     const el = ref.current;
-    if (!el) return;
+    const list = listRef.current;
+    if (!el || !list) return;
     atBottom.current = isNearBottom(el);
+    // Our own fix-up's scroll event keeps the recorded anchor; only the reader's scrolls re-pick it.
+    const ours = fixUpTop.current !== null && Math.abs(el.scrollTop - fixUpTop.current) < 1;
+    fixUpTop.current = null;
+    if (ours && !atBottom.current) return;
+    anchor.current = atBottom.current ? null : pickAnchor(measureItems(el, list), el.scrollTop);
     if (atBottom.current) setUnseen(false);
+  };
+
+  const jump = () => {
+    // The pill unmounts once we're at the bottom; keep focus in the feed rather than drop it to <body>.
+    ref.current?.focus({ preventScroll: true });
+    toBottom();
   };
 
   const nameOf = (id: string | null) => players.find((p) => p.id === id)?.name ?? "";
   return (
-    <div ref={ref} className={`dd-feed ${compact ? "dd-feed-compact" : ""}`} aria-live="polite" onScroll={onScroll}>
-      {items.map((f) => (
-        <p key={f.id} className={`dd-feed-item dd-feed-${f.kind}`}>
-          {f.kind === "chat" && <b>{nameOf(f.playerId)}: </b>}
-          {f.text}
-        </p>
-      ))}
+    <div ref={ref} className={`dd-feed ${compact ? "dd-feed-compact" : ""}`} tabIndex={-1} onScroll={onScroll}>
+      {/* Only the items are live: the pill below must not be announced as a message. */}
+      <div ref={listRef} className="dd-feed-list" aria-live="polite">
+        {items.map((f) => (
+          <p key={f.id} data-id={f.id} className={`dd-feed-item dd-feed-${f.kind}`}>
+            {f.kind === "chat" && <b>{nameOf(f.playerId)}: </b>}
+            {f.text}
+          </p>
+        ))}
+      </div>
       {unseen && (
-        <button type="button" className="dd-feed-jump" data-testid="feed-jump" onClick={toBottom}>
-          New messages <span aria-hidden>↓</span>
+        <button type="button" className="dd-feed-jump" data-testid="feed-jump" aria-label="Jump to new messages" onClick={jump}>
+          <span aria-hidden>↓</span> New<span className="dd-feed-jump-more" aria-hidden> messages</span>
         </button>
       )}
     </div>
