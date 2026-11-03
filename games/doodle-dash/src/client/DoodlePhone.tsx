@@ -3,6 +3,7 @@ import type { DoodleAction, DoodleView } from "../rules";
 import { CanvasView } from "./CanvasView";
 import { DrawPad } from "./DrawPad";
 import { Feed, GuessForm, Hint, PhaseTimer, Reveal, Waiting } from "./parts";
+import { drawerSeesFeed } from "./phase";
 import { useDoodleSounds } from "./useDoodleSounds";
 import { useStrokes } from "./useStrokes";
 
@@ -39,7 +40,7 @@ export function DoodlePhone(p: GameClientProps<DoodleView>) {
 
   if (isDrawer && view.phase === "choosing") {
     return (
-      <div className="phone dd-phone">
+      <div className="phone dd-phone dd-phone-choose">
         {header}
         <h2 className="dd-title">Pick a word to draw</h2>
         <div className="dd-choices">
@@ -52,10 +53,14 @@ export function DoodlePhone(p: GameClientProps<DoodleView>) {
   }
 
   if (isDrawer && view.phase === "drawing") {
+    // Phones-only: no TV to watch guesses on, so the drawer gets a compact feed (doodle.css fits
+    // it above or beside the canvas). It is the drawer's own view.feed, so it shows nothing new.
+    const withFeed = drawerSeesFeed(mode);
     return (
-      <div className="phone dd-phone dd-phone-draw">
+      <div className={`phone dd-phone dd-phone-draw${withFeed ? " dd-phone-draw-feed" : ""}`}>
         {header}
         <p className="dd-secret">Draw: <strong data-testid="secret-word">{view.word}</strong></p>
+        {withFeed && <Feed items={view.feed} players={view.players} compact />}
         <DrawPad strokes={strokes} setStrokes={setStrokes} send={send} activity={activity} fillsLeft={view.fillsLeft} />
       </div>
     );

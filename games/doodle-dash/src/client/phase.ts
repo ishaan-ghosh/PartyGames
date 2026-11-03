@@ -13,3 +13,10 @@ export function timerFor(v: DoodleView): { endsAt: number; totalMs: number } | n
   if (v.waiting || v.phase === "over") return null;
   return { endsAt: v.phaseEndsAt, totalMs: phaseTotal(v) };
 }
+
+/**
+ * Whether the drawer's phone shows the guess feed while drawing. With no TV (phones-only) it is
+ * the only place the drawer can see guesses and "X guessed it!". In screen mode the TV shows the
+ * feed, so the drawer's phone keeps that space for the canvas.
+ */
+export const drawerSeesFeed = (mode: "screen" | "phones"): boolean => mode === "phones";
