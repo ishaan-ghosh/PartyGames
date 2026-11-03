@@ -92,6 +92,18 @@ html.dd-no-overscroll, html.dd-no-overscroll body { overscroll-behavior: none; }
 .dd-toolrow { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(48px, 1fr); gap: 6px; padding: 6px; margin: -6px; overflow-x: auto; scrollbar-width: none; }
 .dd-tool, .dd-size { min-width: 48px; min-height: 48px; display: grid; place-items: center; border: 0; border-radius: var(--radius-sm); background: var(--bg-raised-2); color: var(--text); font-size: 1.3rem; cursor: pointer; }
 .dd-tool.on, .dd-size.on { background: var(--game-accent); }
+/*
+ * Portrait phones: the 12 colors wrap into two rows of 6 and the 6 tool buttons share one row, all
+ * shrinking with the screen so nothing hides off the right edge. With 4px gaps a 320px-wide phone
+ * still gets ~44×48px targets; wider phones get wider buttons, never taller ones. Landscape keeps
+ * the single swipeable rows above, which spend less of the short height.
+ */
+@media (orientation: portrait) {
+  .dd-palette { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 4px; overflow: visible; touch-action: manipulation; }
+  .dd-swatch { width: auto; min-width: 0; height: 48px; }
+  .dd-toolrow { grid-auto-flow: row; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 4px; overflow: visible; }
+  .dd-toolrow .dd-tool, .dd-toolrow .dd-size { min-width: 0; }
+}
 .dd-size span { display: block; border-radius: 50%; background: var(--text); }
 .dd-swatch:focus-visible, .dd-tool:focus-visible, .dd-size:focus-visible,
 .stepper button:focus-visible, .segmented button:focus-visible { outline: 3px solid var(--focus); outline-offset: 3px; }
