@@ -8,6 +8,12 @@
 
 .modal { padding: 0; border: 0; background: transparent; color: var(--text); max-width: min(92vw, 480px); width: 100%; max-height: 90dvh; overflow: visible; }
 .modal::backdrop { background: rgba(10, 9, 17, 0.72); }
+/* No <dialog> API (dialog.ts): the dialog itself becomes a full-screen overlay standing in for ::backdrop,
+   so a click on it outside the card still closes; the card keeps the modal's width. */
+.modal[data-fallback] { position: fixed; inset: 0; z-index: 100; width: auto; max-width: none; height: auto; max-height: none; margin: 0; display: grid; place-items: center; padding: var(--space-4); background: rgba(10, 9, 17, 0.72); }
+.modal[data-fallback] > .modal-body { width: 100%; max-width: min(92vw, 480px); }
+.screen-view .modal[data-fallback] { max-width: none; }
+.screen-view .modal[data-fallback] > .modal-body { max-width: min(90vw, 640px); }
 .modal-body { display: grid; gap: var(--space-4); max-height: 90dvh; overflow-y: auto; overscroll-behavior: contain; }
 .modal-title { font: 600 1.6rem var(--font-display); }
 .modal-text { color: var(--text-dim); font-size: 1.05rem; }
