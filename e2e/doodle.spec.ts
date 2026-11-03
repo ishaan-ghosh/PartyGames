@@ -99,7 +99,9 @@ test("the host kicks players from the lobby and during a game", async ({ browser
   const ben = await joinPhone(browser, code, "Ben");
   const cy = await joinPhone(browser, code, "Cy");
   await expect(screen.getByTestId("lobby-player")).toHaveCount(3);
-  // Only the host can kick: a guest's chips aren't buttons.
+  // Only the host can kick: a guest's chips aren't buttons. Wait for Ana's lobby to list everyone
+  // first, so the no-kick-button check isn't passing on a not-yet-rendered list.
+  await expect(ana.getByTestId("lobby-player")).toHaveCount(3);
   await expect(ana.getByTestId("kick-Ben")).toHaveCount(0);
 
   // Lobby: tapping a chip asks first; Escape cancels and returns focus to the chip.

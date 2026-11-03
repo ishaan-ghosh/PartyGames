@@ -1,4 +1,5 @@
 import { useEffect, useRef, type ReactNode } from "react";
+import { closeDialog, openModalDialog } from "./dialog";
 import "./kick.css";
 
 /**
@@ -22,9 +23,9 @@ export function Modal({ labelledBy, onClose, focusKey, className = "", children 
     const d = ref.current;
     if (!d) return;
     const prev = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    if (!d.open) d.showModal();
+    openModalDialog(d);
     return () => {
-      if (d.open) d.close();
+      closeDialog(d);
       // The trigger may be gone (e.g. the kicked player's chip); then focus falls back to the page.
       if (prev?.isConnected) prev.focus();
     };

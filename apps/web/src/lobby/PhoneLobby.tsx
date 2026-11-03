@@ -3,7 +3,7 @@ import { Button, PlayerChip } from "@party/ui";
 import { QRCodeSVG } from "qrcode.react";
 import { Fragment, useState } from "react";
 import { getClientGame } from "../games";
-import { kickablePlayers } from "../kick/kick";
+import { kickablePlayers, pendingKick } from "../kick/kick";
 import { KickChipButton, KickConfirmDialog } from "../kick/KickDialogs";
 import { publicOrigin } from "../lib/origin";
 import { HostPanel } from "./HostPanel";
@@ -22,7 +22,9 @@ export function PhoneLobby({ room, you, isHost, online, sendHost }: {
   // Host only: tapping a player's chip asks to kick them. The list updates from the server's snapshot.
   const kickable = kickablePlayers(room, you.id);
   const [kickId, setKickId] = useState<string | null>(null);
-  const kickTarget = kickable.find((p) => p.id === kickId);
+  const { target: kickTarget, stale: staleKick } = pendingKick(kickable, kickId);
+  // The target left or we stopped being host: drop the pending confirm so it can't come back later.
+  if (staleKick) setKickId(null);
   return (
     <div className="phone phone-lobby" data-testid="phone-lobby">
       <header className="phone-header">

@@ -12,3 +12,13 @@ export function kickablePlayers(room: RoomSnapshot, youId: string): PublicPlayer
 export function isKickable(room: RoomSnapshot, youId: string, playerId: string): boolean {
   return kickablePlayers(room, youId).some((p) => p.id === playerId);
 }
+
+/**
+ * The player a pending kick confirm (`kickId`) is for. `stale` means a kick was asked for but its
+ * target is no longer kickable (they left, or the viewer stopped being host): the caller must clear
+ * `kickId`, or the confirm would reappear if that player became kickable again.
+ */
+export function pendingKick(kickable: PublicPlayer[], kickId: string | null): { target: PublicPlayer | undefined; stale: boolean } {
+  const target = kickId === null ? undefined : kickable.find((p) => p.id === kickId);
+  return { target, stale: kickId !== null && !target };
+}
