@@ -1,6 +1,6 @@
 import type { PublicPlayer, RoomSnapshot } from "@party/shared";
 import { Button, PlayerChip } from "@party/ui";
-import { useId, useState, type ReactNode } from "react";
+import { useId, useState, type ReactNode, type Ref } from "react";
 import { kickablePlayers } from "./kick";
 import { Modal } from "./Modal";
 
@@ -28,13 +28,15 @@ function ConfirmBody({ player, titleId, online, onKick, onCancel }: {
 }
 
 /** Lobby: wraps a kickable player's chip so the host can tap it; the chip keeps its own look. */
-export function KickChipButton({ player, onClick, children }: {
+export function KickChipButton({ player, onClick, buttonRef, children }: {
   player: PublicPlayer;
   onClick(): void;
+  buttonRef?: Ref<HTMLButtonElement>;
   children: ReactNode;
 }) {
   return (
     <button
+      ref={buttonRef}
       type="button"
       className="chip-button"
       data-testid={`kick-${player.name}`}
@@ -91,16 +93,18 @@ export function PlayersDialog({ room, youId, online, onKick, onClose }: {
   const target = kickable.find((p) => p.id === targetId);
 
   if (target) {
+    const back = () => {
+      setReturnTo(target.id);
+      setTargetId(null);
+    };
+    // Escape/Back (and the backdrop) step back to the list, like Cancel; they don't close the dialog.
     return (
-      <Modal labelledBy={titleId} onClose={onClose} focusKey={`confirm:${target.id}`} className="modal-confirm">
+      <Modal labelledBy={titleId} onClose={back} focusKey={`confirm:${target.id}`} className="modal-confirm">
         <ConfirmBody
           player={target}
           titleId={titleId}
           online={online}
-          onCancel={() => {
-            setReturnTo(target.id);
-            setTargetId(null);
-          }}
+          onCancel={back}
           onKick={() => {
             onKick(target.id);
             setReturnTo(null);

@@ -7,6 +7,9 @@
 .code-hint { color: var(--text-dim); }
 .players-panel { display: grid; gap: var(--space-5); }
 .players-panel h2 { font-size: clamp(2rem, 3.5vw, 3rem); }
+/* Heading and the host's kick hint share a line (wrapping if narrow), so the hint costs no height. */
+.players-head { display: flex; flex-wrap: wrap; align-items: baseline; column-gap: var(--space-5); row-gap: var(--space-1); }
+.lobby-kick-hint { color: var(--text-dim); font: 600 clamp(1.05rem, 1.5vw, 1.6rem) var(--font-display); }
 .players-grid { display: flex; flex-wrap: wrap; gap: var(--space-3); }
 .waiting { color: var(--text-dim); font: 600 1.5rem var(--font-display); }
 .host-panel { display: grid; gap: var(--space-4); }
