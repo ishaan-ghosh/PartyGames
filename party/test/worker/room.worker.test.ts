@@ -83,9 +83,16 @@ describe("worker", () => {
       // The log limited itself too: 400 rejections, far fewer lines.
       const lines = warn.mock.calls.map((c) => String(c[0])).filter((l) => l.includes(`"room":"${code}"`));
       expect(lines.length).toBeLessThan(40);
-      // Still open: a short burst is dropped, not punished.
-      ws.send(JSON.stringify({ type: "hello", role: "player", name: "Ana" }));
-      await vi.waitFor(() => expect(messages.some((m) => m.type === "welcome")).toBe(true), { timeout: 3000 });
+      // Still open: a short burst is dropped, not punished. The flood's frames are separate events
+      // (hibernation API) that may still be draining the bucket when a single hello lands, so retry
+      // with gaps that let it refill; it is never closed (no 5 s drop streak) and is welcomed.
+      await vi.waitFor(
+        () => {
+          if (!messages.some((m) => m.type === "welcome")) ws.send(JSON.stringify({ type: "hello", role: "player", name: "Ana" }));
+          expect(messages.some((m) => m.type === "welcome")).toBe(true);
+        },
+        { timeout: 3000, interval: 250 },
+      );
       ws.close();
     } finally {
       warn.mockRestore();

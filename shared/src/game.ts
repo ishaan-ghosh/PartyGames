@@ -5,10 +5,13 @@ export type Viewer = { kind: "screen" } | { kind: "player"; playerId: string };
 /** "others" = every connected device except the one that sent the action. */
 export interface GameEvent { to: "all" | "others"; payload: unknown }
 /**
- * quiet: true → the room relays `events` but does NOT rebroadcast views or persist.
+ * quiet: true → the room relays `events` but does NOT rebroadcast views or save at once. An accepted
+ * quiet action (no `rejected`) marks the room dirty: it is saved lazily, within about 2 s (the room's
+ * QUIET_SAVE_MS), so e.g. strokes survive hibernation without a write per stroke.
  * rejected: the game refused the action; a short reason code (e.g. "not_drawer", "wrong_phase") the
- * room logs with the action type. Never put player text in it. Independent of `quiet`: a refused
- * action can still return changed state (e.g. timers caught up), and the room handles that as usual.
+ * room logs with the action type. Never put player text in it. A refused quiet action must leave the
+ * state unchanged: the room neither saves nor marks it dirty. If refusing still changed state (e.g.
+ * due timers caught up first), return `quiet: false`, and the room rebroadcasts and saves as usual.
  */
 export interface ActionResult<S> { state: S; events?: GameEvent[]; quiet?: boolean; rejected?: string }
 /** A separately stored piece of game state. Equal `rev` means equal `value`. */

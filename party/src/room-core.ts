@@ -123,6 +123,8 @@ export class RoomCore {
    * so the adapter must save. A wake from hibernation with every socket still open changes nothing.
    */
   readonly restoreChanged: boolean = false;
+  /** Members restore found disconnected that were connected at save time (see announceRestore). */
+  private readonly droppedAtRestore: boolean = false;
 
   constructor(
     code: string,
@@ -136,17 +138,22 @@ export class RoomCore {
       delete this.s.parts;
       delete this.s.partRevs;
       let changed = false;
-      const offline = new Set<string>();
+      // Connected at save time but their socket is no longer open: it closed while the room hibernated
+      // (its close may even be the event that woke us, and it no longer counts as open), or a restart
+      // dropped it without any close event. Either way no onClose will find them, so they get the full
+      // disconnect treatment here. Members already offline at save time are left as they were.
+      const dropped = new Set<string>();
       for (const m of this.s.members) {
         if (m.connId !== null && restore.live?.has(m.connId) && m.disconnectedAt === null) continue;
+        if (m.connId !== null) dropped.add(m.id);
         // Older saves lack disconnectedAt; anyone connected at save time dropped "now".
         if (m.connId !== null || typeof m.disconnectedAt !== "number") {
           m.disconnectedAt = restore.now;
           changed = true;
         }
         m.connId = null;
-        offline.add(m.id);
       }
+      if (this.s.hostId !== null && dropped.has(this.s.hostId) && this.s.hostGoneAt === null) this.s.hostGoneAt = restore.now;
       // The saved game may no longer be registered (removed in a later deploy, or a pre-fix prototype key
       // like "constructor"): reopen in the lobby with the default game rather than crash on wake.
       if (!Object.prototype.hasOwnProperty.call(deps.games, this.s.gameId)) {
@@ -172,12 +179,16 @@ export class RoomCore {
         const parts = Object.fromEntries(partNames.map((n) => [n, restore.parts?.[n]]));
         this.s.gameState = this.game.joinSave(this.s.gameState, parts);
       }
+      // Only for players who went offline just now: telling the game again about someone long gone
+      // would restart its grace timers (e.g. Doodle Dash's drawer skip) on every wake.
       if (this.s.phase === "playing") {
         for (const m of this.s.members) {
-          if (m.kind === "player" && offline.has(m.id)) this.s.gameState = this.game.onPresence(this.s.gameState, m.id, false, restore.now);
+          if (m.kind === "player" && dropped.has(m.id)) this.s.gameState = this.game.onPresence(this.s.gameState, m.id, false, restore.now);
         }
+        this.checkOver();
       }
       this.restoreChanged = changed;
+      this.droppedAtRestore = dropped.size > 0;
     } else {
       const game = deps.games[deps.defaultGameId];
       if (!game) throw new Error(`Unknown default game ${deps.defaultGameId}`);
@@ -187,6 +198,14 @@ export class RoomCore {
         phase: "lobby", gameState: null, seated: [], lastResults: null, emptySince: null,
       };
     }
+  }
+
+  /**
+   * Call once after restoring, when the adapter can send again: if anyone was dropped, tells the
+   * members still connected (after hibernation, on their open sockets) the room as it is now.
+   */
+  announceRestore(now: number): void {
+    if (this.droppedAtRestore) this.broadcast(now);
   }
 
   get created(): boolean {

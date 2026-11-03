@@ -9,7 +9,7 @@ import { QUIET_SAVE_MS } from "../../src/room";
 // runs onStart from storage. That is what production hibernation does to an idle room.
 
 type Msg = { type: string; [k: string]: unknown };
-type View = { phase: string; drawerId: string; you: { id: string }; strokeSig: string };
+type View = { phase: string; drawerId: string; you: { id: string }; strokeSig: string; players: { id: string; connected: boolean }[] };
 type Room = { players: { id: string; name: string; connected: boolean }[]; hostId: string; phase: string };
 
 async function createRoom() {
@@ -86,6 +86,35 @@ describe("room hibernation", () => {
     b.ws.close();
     await vi.waitFor(() => expect(lastRoom(a)!.players.find((p) => p.name === "Ben")!.connected).toBe(false));
     a.ws.close();
+  });
+
+  it("handles a socket that closes while the room is hibernated as a disconnect (host)", async () => {
+    const { code, a, b } = await lobby();
+    await evictDurableObject(stubFor(code));
+    const closedAt = Date.now();
+    a.ws.close(1000); // the host's close is the event that wakes the room
+    await vi.waitFor(() => expect(lastRoom(b)!.players.find((p) => p.name === "Ana")!.connected).toBe(false));
+    await vi.waitFor(async () => expect((await savedRoom(code))!.hostGoneAt).toBeGreaterThanOrEqual(closedAt));
+    const saved = (await savedRoom(code))!;
+    expect(saved.members.find((m) => m.name === "Ana")).toMatchObject({ connId: null });
+    expect(saved.members.find((m) => m.name === "Ben")!.connId).not.toBeNull();
+    // Ben's socket is still bound: he can act without a new hello.
+    b.messages.length = 0;
+    b.send({ type: "host", cmd: { cmd: "start" } });
+    await vi.waitFor(() => expect(b.messages.some((m) => m.type === "error" && m.code === "NOT_HOST")).toBe(true));
+    b.ws.close();
+  });
+
+  it("handles a player's socket closing while a hibernated game is running", async () => {
+    const { code, drawer, watcher } = await drawingTurn();
+    await evictDurableObject(stubFor(code));
+    const gone = lastView(drawer)!.you.id;
+    drawer.ws.close(1000);
+    await vi.waitFor(() => expect(lastView(watcher)!.players.find((p) => p.id === gone)!.connected).toBe(false));
+    const state = (await savedRoom(code))!.gameState as { connected: Record<string, boolean>; drawerGoneAt: number | null };
+    expect(state.connected[gone]).toBe(false);
+    expect(state.drawerGoneAt).not.toBeNull();
+    watcher.ws.close();
   });
 
   it("does not lose a mid-turn drawing: quiet strokes are saved within QUIET_SAVE_MS", async () => {

@@ -79,6 +79,7 @@ export class Room extends Server<Env> {
     // Restoring marks everyone whose socket is gone disconnected; persist that if it changed anything
     // (a wake from hibernation with every socket still open writes nothing), and make sure an alarm
     // exists, because a restart can drop sockets without onClose and nothing else would wake this room.
+    this.core.announceRestore(Date.now());
     await this.after(this.core.restoreChanged);
   }
 

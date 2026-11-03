@@ -423,6 +423,67 @@ describe("RoomCore: host handoff and lifetime", () => {
     expect(other.serialize().emptySince).toBe(5000);
   });
 
+  it("gives members whose socket closed during hibernation the full disconnect treatment", () => {
+    const h = started();
+    const saved = h.core.serialize();
+    const sent2: { to: string; msg: ServerMsg }[] = [];
+    const out2: Outbox = { send: (to, msg) => sent2.push({ to, msg }), close: () => {} };
+    // The host screen (s1) and Ben (c2) closed while the room slept; only Ana's socket is still open.
+    const woken = new RoomCore("ABCD", h.deps, out2, { saved, now: 5000, live: new Set(["c1"]) });
+    const s = woken.serialize();
+    expect(s.hostGoneAt).toBe(5000); // so the host is handed over after its grace
+    expect((s.gameState as CState).presence).toEqual({ [h.id("c2")]: false });
+    expect(sent2).toEqual([]);
+    woken.announceRestore(5000);
+    const room = sent2.filter((x) => x.to === "c1" && x.msg.type === "room").at(-1)!.msg as Extract<ServerMsg, { type: "room" }>;
+    expect(room.room.players.find((p) => p.id === h.id("c2"))!.connected).toBe(false);
+    expect(room.room.screens[0]!.connected).toBe(false);
+    woken.tick(5000 + LIMITS.hostGraceMs);
+    expect(woken.snapshot().hostId).toBe(h.id("c1"));
+    // The late onClose of a socket restore already dropped changes nothing.
+    expect(woken.disconnect("c2", 6000)).toEqual({ persist: false });
+  });
+
+  it("ends a game on restore if the players lost meanwhile leave it over", () => {
+    const g: GameModule<CState, CAction, { target: number }> = {
+      ...counter,
+      isOver: (st) => st.count >= st.target || Object.values(st.presence).includes(false),
+    };
+    const h = setup({ game: g });
+    h.screen("s1", { hostKey: "HOSTKEY" });
+    h.player("c1", "Ana");
+    h.player("c2", "Ben");
+    h.host("s1", { cmd: "start" });
+    const woken = new RoomCore("ABCD", h.deps, { send: () => {}, close: () => {} }, { saved: h.core.serialize(), now: 5000, live: new Set(["s1", "c1"]) });
+    expect(woken.serialize().phase).toBe("lobby");
+  });
+
+  it("does not re-announce players who were already offline at save time to the game", () => {
+    const calls: string[] = [];
+    const g: GameModule<CState, CAction, { target: number }> = {
+      ...counter,
+      onPresence: (st, id, connected, now) => {
+        calls.push(`${id}:${connected}@${now}`);
+        return counter.onPresence(st, id, connected, now);
+      },
+    };
+    const h = setup({ game: g });
+    h.screen("s1", { hostKey: "HOSTKEY" });
+    h.player("c1", "Ana");
+    h.player("c2", "Ben");
+    h.player("c3", "Cat");
+    h.host("s1", { cmd: "start" });
+    h.core.disconnect("c2", 100); // Ben left before the save
+    const saved = h.core.serialize();
+    calls.length = 0;
+    // Wake with everyone else still connected: the game hears nothing.
+    new RoomCore("ABCD", h.deps, { send: () => {}, close: () => {} }, { saved, now: 5000, live: new Set(["s1", "c1", "c3"]) });
+    expect(calls).toEqual([]);
+    // Cat's socket closed meanwhile: only Cat is reported, not Ben again.
+    new RoomCore("ABCD", h.deps, { send: () => {}, close: () => {} }, { saved, now: 5000, live: new Set(["s1", "c1"]) });
+    expect(calls).toEqual([`${h.id("c3")}:false@5000`]);
+  });
+
   it("asks for a save on tick only when something may have changed", () => {
     const l = lobby();
     expect(l.core.tick(5_000)).toEqual({ persist: false }); // idle lobby watchdog

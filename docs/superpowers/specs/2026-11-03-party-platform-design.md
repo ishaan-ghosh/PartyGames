@@ -67,8 +67,15 @@ that must outlive a quiet spell lives in storage or on the socket itself:
   reconnects. That way a half-open old socket's late close can't disconnect its replacement, and two
   sockets never share an id. Nothing else is stored on the socket: no names, tokens or keys.
 - **Rebinding on wake:** `onStart` collects the ids of sockets still open. A member saved as
-  connected on one of them stays connected. Everyone else is marked disconnected, as after a restart.
-  If that changed nothing (the normal case after hibernation), the wake writes nothing.
+  connected on one of them stays connected. A member saved as connected whose socket is no longer
+  open gets the full disconnect treatment during restore, because no `onClose` will find them later.
+  That covers three cases: the socket closed while the room hibernated, its close is the event that
+  woke the room (the runtime has already marked it closed), or a restart dropped it without any
+  close event. The treatment: `disconnectedAt`, `hostGoneAt` if it was the host, the game's
+  `onPresence(false)` and end check, then one broadcast to whoever is still connected. Members
+  already offline at save time are left alone. In particular the game isn't told again, which would
+  restart grace timers such as Doodle Dash's drawer skip on every wake. If restore changed nothing
+  (the normal case after hibernation), the wake writes nothing.
 - **Quiet changes (strokes):** quiet actions don't save at once. The first one marks the room
   dirty and starts a 2 s timer (`QUIET_SAVE_MS`) that saves. Any other save before then covers it
   and cancels the timer. A pending timer also stops the runtime from hibernating the object, so

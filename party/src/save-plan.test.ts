@@ -52,6 +52,15 @@ describe("SavePlanner", () => {
     expect(woken.plan({ saved, parts: parts({ a: "1", b: "1" }) })).toEqual({ put: { [ROOM_KEY]: room({ a: "1", b: "1" }) }, del: [] });
   });
 
+  // Part revs only need to be unique within one game: ending a game saves a lobby record with no
+  // parts, which deletes them and forgets every rev, so a new game's equal rev is written again.
+  it("forgets all revs on a save without parts, so a later part with an old rev is written again", () => {
+    const p = new SavePlanner();
+    p.plan({ saved, parts: parts({ a: "1" }) });
+    expect(p.plan({ saved, parts: {} })).toEqual({ put: { [ROOM_KEY]: room() }, del: [partKey("a")] });
+    expect(p.plan({ saved, parts: parts({ a: "1" }) }).put).toEqual({ [ROOM_KEY]: room({ a: "1" }), [partKey("a")]: "a@1" });
+  });
+
   it("writes everything again after a reset (storage wiped)", () => {
     const p = new SavePlanner();
     p.plan({ saved, parts: parts({ a: "1" }) });
