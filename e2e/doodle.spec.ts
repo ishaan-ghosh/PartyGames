@@ -14,7 +14,10 @@ async function inkedPixels(page: Page): Promise<number> {
   return page.getByTestId("screen-canvas").evaluate((c: HTMLCanvasElement) => {
     const d = c.getContext("2d")!.getImageData(0, 0, c.width, c.height).data;
     let n = 0;
-    for (let i = 0; i < d.length; i += 4) if (d[i]! < 250 || d[i + 1]! < 250 || d[i + 2]! < 250) n++;
+    // Count only opaque, non-white pixels: an unpainted (transparent) canvas must not count as ink.
+    for (let i = 0; i < d.length; i += 4) {
+      if (d[i + 3] === 255 && (d[i]! < 250 || d[i + 1]! < 250 || d[i + 2]! < 250)) n++;
+    }
     return n;
   });
 }
@@ -49,6 +52,10 @@ test("screen + 3 phones play a turn, and a reloaded phone keeps its score", asyn
   await ben.getByTestId("guess-input").press("Enter");
   await expect(screen.getByTestId("score-Ben")).not.toHaveText("0");
   await expect(screen.locator(".dd-feed")).not.toContainText(word);
+  // Nor on any phone feed: not the other guesser's, nor Ben's own. (Ana is drawing, so her phone has no feed.)
+  await expect(cy.locator(".dd-feed")).toBeVisible();
+  await expect(cy.locator(".dd-feed")).not.toContainText(word);
+  await expect(ben.locator(".dd-feed")).not.toContainText(word);
 
   await cy.getByTestId("guess-input").fill(word);
   await cy.getByTestId("guess-input").press("Enter");
@@ -58,6 +65,9 @@ test("screen + 3 phones play a turn, and a reloaded phone keeps its score", asyn
   const benScore = await screen.getByTestId("score-Ben").innerText();
   await ben.reload();
   await expect(ben.getByTestId("my-score")).toHaveText(benScore);
+  // The reloaded phone rejoined the game with its token: no lobby, no join form.
+  await expect(ben.getByTestId("phone-lobby")).toHaveCount(0);
+  await expect(ben.getByTestId("name-input")).toHaveCount(0);
   await expect(screen.getByTestId("lobby-player")).toHaveCount(0); // still in game, not lobby
 });
 

@@ -14,8 +14,10 @@ Open http://localhost:5173 on the laptop and click **Host on this screen**. Phon
 
 ```bash
 pnpm typecheck && pnpm test   # unit + room + worker tests
+pnpm exec playwright install chromium   # once, before the first pnpm e2e
 pnpm e2e                      # Playwright: real Worker, real Durable Objects
 ```
+`pnpm e2e` builds the app and starts its own server on :8787, so stop `pnpm dev` first.
 
 ## Deploy (Cloudflare free plan)
 
