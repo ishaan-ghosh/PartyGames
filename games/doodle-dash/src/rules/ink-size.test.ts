@@ -12,13 +12,14 @@ beforeAll(async () => {
   ({ serialize } = (await import(/* @vite-ignore */ v8Module)) as { serialize: (v: unknown) => Uint8Array });
 });
 
-const begin = (points: number[]) => ({ t: "strokeBegin", tool: "pen", color: 0, size: 0, points });
+const begin = (points: number[]) => ({ t: "strokeBegin", id: 1, tool: "pen", color: 0, size: 0, points });
 
 describe("stroke coordinate rounding", () => {
   it("rounds begin, append and fill coordinates to 3 decimals", () => {
     expect(parseAction(begin([0.123456, 0.9996]))).toMatchObject({ points: [0.123, 1] });
-    expect(parseAction({ t: "strokeAppend", points: [0.0004, 0.5555555] })).toEqual({
+    expect(parseAction({ t: "strokeAppend", id: 1, points: [0.0004, 0.5555555] })).toEqual({
       t: "strokeAppend",
+      id: 1,
       points: [0, 0.556],
     });
     expect(parseAction({ t: "fill", color: 0, x: 0.123456, y: 0.9996 })).toEqual({ t: "fill", color: 0, x: 0.123, y: 1 });
@@ -37,9 +38,9 @@ describe("ink limit", () => {
 
   it("charges a per-stroke cost on strokeBegin and fill but not on append", () => {
     const s = drawing("banana");
-    handleStroke(s, "p1", { t: "strokeBegin", tool: "pen", color: 0, size: 0, points: [0.1, 0.1] });
+    handleStroke(s, "p1", { t: "strokeBegin", id: 1, tool: "pen", color: 0, size: 0, points: [0.1, 0.1] });
     expect(s.ink).toBe(2 + STROKE_COST);
-    handleStroke(s, "p1", { t: "strokeAppend", points: [0.2, 0.2, 0.3, 0.3] });
+    handleStroke(s, "p1", { t: "strokeAppend", id: 1, points: [0.2, 0.2, 0.3, 0.3] });
     expect(s.ink).toBe(6 + STROKE_COST);
     handleStroke(s, "p1", { t: "fill", color: 0, x: 0.5, y: 0.5 });
     expect(s.ink).toBe(8 + 2 * STROKE_COST);
@@ -51,10 +52,10 @@ describe("ink limit", () => {
   it("rejects a batch that would exceed the limit", () => {
     const s = drawing("banana");
     s.ink = INK_LIMIT - STROKE_COST - 2;
-    const over = handleStroke(s, "p1", { t: "strokeBegin", tool: "pen", color: 0, size: 0, points: [0.1, 0.1, 0.2, 0.2] });
+    const over = handleStroke(s, "p1", { t: "strokeBegin", id: 1, tool: "pen", color: 0, size: 0, points: [0.1, 0.1, 0.2, 0.2] });
     expect(over.events).toBeUndefined();
     expect(s.ink).toBe(INK_LIMIT - STROKE_COST - 2);
-    const fits = handleStroke(s, "p1", { t: "strokeBegin", tool: "pen", color: 0, size: 0, points: [0.1, 0.1] });
+    const fits = handleStroke(s, "p1", { t: "strokeBegin", id: 1, tool: "pen", color: 0, size: 0, points: [0.1, 0.1] });
     expect(fits.events).toBeDefined();
     expect(s.ink).toBe(INK_LIMIT);
   });
@@ -93,7 +94,7 @@ describe("max-ink message and save size", () => {
   it("one long random stroke", () => {
     const s = flood((first) => {
       const pts = Array.from({ length: MAX_POINTS_PER_BATCH }, rand);
-      return first ? begin(pts) : { t: "strokeAppend", points: pts };
+      return first ? begin(pts) : { t: "strokeAppend", id: 1, points: pts };
     });
     expect(s.ink).toBeGreaterThan(INK_LIMIT - MAX_POINTS_PER_BATCH);
     expectSmall(s);

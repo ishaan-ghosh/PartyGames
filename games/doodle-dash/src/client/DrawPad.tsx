@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type Dispatch, type PointerEvent, type SetStateAction } from "react";
 import { BRUSH_SIZES, PALETTE, type DoodleAction, type Stroke } from "../rules";
 import { CanvasView } from "./CanvasView";
-import { chunkPoints, fillBadge, fillsRemaining, normalizePoint } from "./strokes";
+import { chunkPoints, fillBadge, fillsRemaining, firstStrokeKey, nextStrokeKey, normalizePoint } from "./strokes";
 import type { ActivityRef } from "./useStrokes";
 
 type Tool = "pen" | "eraser" | "fill";
@@ -42,6 +42,9 @@ export function DrawPad({ strokes, setStrokes, send, activity, fillsLeft: server
   const pending = useRef<number[]>([]);
   const last = useRef<[number, number]>([0, 0]);
   const localId = useRef(-1); // negative ids never collide with server ids
+  // The id sent with strokeBegin and every strokeAppend of the current stroke, so the server
+  // can refuse appends whose begin was lost. Not the local (negative) or server stroke id.
+  const strokeKey = useRef<number | null>(null);
   // The parent passes a fresh `send` every render; keep the batching timer independent of that.
   const sendRef = useRef(send);
   sendRef.current = send;
@@ -55,7 +58,8 @@ export function DrawPad({ strokes, setStrokes, send, activity, fillsLeft: server
       if (pending.current.length) {
         const batches = chunkPoints(pending.current);
         pending.current = [];
-        for (const points of batches) io.send({ t: "strokeAppend", points });
+        const id = strokeKey.current;
+        if (id !== null) for (const points of batches) io.send({ t: "strokeAppend", id, points });
       }
       activity.current.pendingPoints = 0;
     },
@@ -119,7 +123,9 @@ export function DrawPad({ strokes, setStrokes, send, activity, fillsLeft: server
     activity.current.drawing = true;
     last.current = [x, y];
     const id = localId.current--;
-    io.send({ t: "strokeBegin", tool, color, size, points: [x, y] });
+    const key = strokeKey.current === null ? firstStrokeKey() : nextStrokeKey(strokeKey.current);
+    strokeKey.current = key;
+    io.send({ t: "strokeBegin", id: key, tool, color, size, points: [x, y] });
     setStrokes((s) => [...s, { id, tool, color, size, points: [x, y] }]);
   };
 

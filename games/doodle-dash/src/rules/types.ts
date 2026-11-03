@@ -43,9 +43,14 @@ export type StrokeOp =
   | { op: "undo"; seq: number }
   | { op: "clear"; seq: number };
 
+/**
+ * `id` on strokeBegin/strokeAppend is the drawer client's own stroke id (0..2^31-1), not the server's
+ * Stroke.id: an append only extends the last stroke if that stroke was begun with the same id, so
+ * appends whose begin was lost (e.g. dropped across a reconnect) are refused instead of misattached.
+ */
 export type StrokeAction =
-  | { t: "strokeBegin"; tool: "pen" | "eraser"; color: number; size: number; points: number[] }
-  | { t: "strokeAppend"; points: number[] }
+  | { t: "strokeBegin"; id: number; tool: "pen" | "eraser"; color: number; size: number; points: number[] }
+  | { t: "strokeAppend"; id: number; points: number[] }
   | { t: "fill"; color: number; x: number; y: number }
   | { t: "undo" }
   | { t: "clear" };
@@ -74,6 +79,12 @@ export interface DoodleState {
   strokes: Stroke[];
   opSeq: number; // increases forever; clients drop stale ops
   nextStrokeId: number;
+  /**
+   * The drawer's id (`key`) for the last strokeBegin and the server stroke it created. Appends must
+   * name `key` and that stroke must still be last. Missing in states saved before stroke ids: appends
+   * are refused until the next begin.
+   */
+  openStroke: { key: number; strokeId: number } | null;
   ink: number; // numbers received this turn
   /** Fills accepted this turn (see MAX_FILLS). Missing in states saved before the cap: read as 0. */
   fills: number;

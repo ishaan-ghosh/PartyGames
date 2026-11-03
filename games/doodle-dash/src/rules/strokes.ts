@@ -13,12 +13,17 @@ export function handleStroke(s: DoodleState, playerId: string, action: StrokeAct
       s.ink += cost;
       const stroke: Stroke = { id: s.nextStrokeId++, tool: action.tool, color: action.color, size: action.size, points: [...action.points] };
       s.strokes.push(stroke);
+      s.openStroke = { key: action.id, strokeId: stroke.id };
       op = { op: "begin", seq: ++s.opSeq, stroke: { ...stroke, points: [...stroke.points] } };
       break;
     }
     case "strokeAppend": {
+      // Only the stroke begun with this id, and only while it is still last: if its begin was lost,
+      // appending would extend some earlier stroke (wrong color, a line joining the two).
       const last = s.strokes.at(-1);
-      if (!last || last.tool === "fill" || s.ink + action.points.length > INK_LIMIT) return ignore;
+      const open = s.openStroke;
+      if (!last || last.tool === "fill" || !open || open.key !== action.id || open.strokeId !== last.id) return ignore;
+      if (s.ink + action.points.length > INK_LIMIT) return ignore;
       s.ink += action.points.length;
       last.points.push(...action.points);
       op = { op: "append", seq: ++s.opSeq, strokeId: last.id, points: [...action.points] };

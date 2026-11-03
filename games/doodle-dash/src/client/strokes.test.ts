@@ -1,6 +1,18 @@
 import { describe, expect, it } from "vitest";
 import { MAX_FILLS, MAX_POINTS_PER_BATCH, type Stroke } from "../rules";
-import { applyOp, chunkPoints, fillBadge, fillsRemaining, floodFillData, hexToRgb, normalizePoint, planRender } from "./strokes";
+import {
+  MAX_STROKE_KEY,
+  applyOp,
+  chunkPoints,
+  fillBadge,
+  fillsRemaining,
+  firstStrokeKey,
+  floodFillData,
+  hexToRgb,
+  nextStrokeKey,
+  normalizePoint,
+  planRender,
+} from "./strokes";
 
 const pen = (id: number, points: number[]): Stroke => ({ id, tool: "pen", color: 0, size: 0, points });
 
@@ -155,6 +167,20 @@ describe("fillsRemaining", () => {
     expect(fillsRemaining(MAX_FILLS, MAX_FILLS + 2)).toBe(0);
     expect(fillsRemaining(-1, 0)).toBe(0);
     expect(fillsRemaining(0, 0)).toBe(0);
+  });
+});
+
+describe("stroke keys", () => {
+  it("start somewhere random in range, so a reloaded pad is unlikely to reuse its last key", () => {
+    expect(firstStrokeKey(() => 0)).toBe(0);
+    const k = firstStrokeKey(() => 0.999999);
+    expect(Number.isInteger(k) && k >= 0 && k <= MAX_STROKE_KEY).toBe(true);
+  });
+
+  it("count up and wrap inside the range the server accepts", () => {
+    expect(nextStrokeKey(5)).toBe(6);
+    expect(nextStrokeKey(MAX_STROKE_KEY)).toBe(0);
+    expect(MAX_STROKE_KEY).toBe(2 ** 31 - 1);
   });
 });
 

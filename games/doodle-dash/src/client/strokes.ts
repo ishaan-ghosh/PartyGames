@@ -42,6 +42,18 @@ export function fillsRemaining(serverLeft: number | undefined, sentThisTurn: num
   return Math.max(0, Math.min(serverLeft ?? MAX_FILLS, MAX_FILLS - sentThisTurn));
 }
 
+/** Largest stroke id the server accepts on strokeBegin/strokeAppend. */
+export const MAX_STROKE_KEY = 2 ** 31 - 1;
+
+/** A pad's first stroke id: random, so a reloaded pad is unlikely to reuse the server's open stroke id. */
+export function firstStrokeKey(random: () => number = Math.random): number {
+  return Math.min(MAX_STROKE_KEY, Math.floor(random() * (MAX_STROKE_KEY + 1)));
+}
+
+export function nextStrokeKey(key: number): number {
+  return key >= MAX_STROKE_KEY ? 0 : key + 1;
+}
+
 /** Badge text for the fill tool: the count once few fills are left, otherwise nothing. */
 export function fillBadge(left: number): string | null {
   return left <= 10 ? String(left) : null;
