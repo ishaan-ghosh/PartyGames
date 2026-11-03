@@ -1,5 +1,12 @@
 import { devices, expect, test, type Browser, type Page } from "@playwright/test";
 
+// Every test opens its own browser contexts (TV, phones) on the shared browser and never closes
+// them, so earlier tests' rooms (sockets, timers, canvases) would keep running. WebKit runs them all in
+// one process, and later tests' pages then stall (clicks, animation frames) until they time out.
+test.afterEach(async ({ browser }) => {
+  await Promise.all(browser.contexts().map((c) => c.close()));
+});
+
 async function joinPhone(browser: Browser, code: string, name: string): Promise<Page> {
   const ctx = await browser.newContext({ ...devices["Pixel 7"] });
   const page = await ctx.newPage();
@@ -162,14 +169,20 @@ for (const viewport of [{ width: 667, height: 375 }, { width: 844, height: 390 }
 
     // The ink lands under the pointer: the stroke ran from (0.2, 0.2) to (0.8, 0.68) of the canvas,
     // i.e. (192, 108)–(768, 367) on the 960×540 bitmap, give or take the 9px brush.
-    // Polled: CanvasView paints on the next animation frame, so straight after mouse.up the last
-    // points may not be on the bitmap yet (the stroke looks cut short). An offset never settles.
-    const want = { minX: 192, maxX: 768, minY: 108, maxY: 367 };
-    const worst = async () => {
-      const ink = await inkBounds(host, "draw-canvas");
-      return Math.max(...(Object.keys(want) as (keyof typeof want)[]).map((k) => Math.abs(ink[k] - want[k])));
-    };
-    await expect.poll(worst, { timeout: 3000, message: "ink bounds within 10px of the stroke" }).toBeLessThanOrEqual(10);
+    // CanvasView paints on the next animation frame, so straight after mouse.up the last points may
+    // not be on the bitmap yet (the stroke looks cut short). Wait until two samples in a row agree,
+    // then check that settled bitmap once: an offset would still show.
+    let ink = await inkBounds(host, "draw-canvas");
+    await expect
+      .poll(async () => {
+        const prev = ink;
+        ink = await inkBounds(host, "draw-canvas");
+        return JSON.stringify(ink) === JSON.stringify(prev);
+      }, { timeout: 3000, intervals: [50], message: "the drawer's canvas settles" })
+      .toBe(true);
+    for (const [got, want] of [[ink.minX, 192], [ink.maxX, 768], [ink.minY, 108], [ink.maxY, 367]] as const) {
+      expect(Math.abs(got - want)).toBeLessThanOrEqual(10);
+    }
     // The sideways drawer stays in normal flow, one viewport tall, like the portrait one: iOS Safari
     // can hit-test touches on a position: fixed layer away from where it paints it, which drew
     // strokes a constant distance below the finger. Nor may any ancestor of the canvas be transformed.
@@ -230,16 +243,20 @@ for (const viewport of [{ width: 667, height: 375 }, { width: 844, height: 390 }
     await host.keyboard.press("Escape");
     await expect(red).toBeHidden();
     await expect(toggle).toBeFocused();
-    // Picking from the keyboard closes the panel without dropping focus to the page.
+    // Picking from the keyboard closes the panel without dropping focus to the page. (Focused
+    // directly: WebKit doesn't Tab between buttons by default.)
     await host.keyboard.press("Enter");
-    await host.keyboard.press("Tab");
+    await host.getByRole("radio", { name: "White" }).focus();
     await host.keyboard.press("Enter");
     await expect(red).toBeHidden();
     await expect(toggle).toBeFocused();
 
     // Escape in the Players dialog (opened from the panel's host bar) closes only the dialog.
+    // Opened from the keyboard: WebKit (like Safari) doesn't focus a clicked button, so after a click
+    // the dialog would hand focus back to the page, not the Players button.
     await toggle.click();
-    await host.getByTestId("host-players").click();
+    await host.getByTestId("host-players").focus();
+    await host.keyboard.press("Enter");
     const dialog = host.getByRole("dialog");
     await expect(dialog).toBeVisible();
     await host.keyboard.press("Escape");
@@ -254,6 +271,59 @@ for (const viewport of [{ width: 667, height: 375 }, { width: 844, height: 390 }
     await expect(toggle).toBeFocused();
   });
 }
+
+// The "top" sideways layout's feed is a one-line strip: no "New messages" pill over that line, and
+// rotating into it from the "rail" layout (where the drawer may have scrolled up) shows the newest guess.
+test("phones-only: a sideways drawer's one-line feed strip always shows the newest guess", async ({ browser, browserName }) => {
+  const phone = browserName === "webkit" ? devices["iPhone 13"] : devices["Pixel 7"];
+  const host = await (await browser.newContext({ ...phone, viewport: { width: 844, height: 390 } })).newPage();
+  await host.goto("/");
+  await host.getByTestId("host-phone").click();
+  await host.getByTestId("name-input").fill("Host");
+  await host.getByTestId("join-submit").click();
+  await expect(host.getByTestId("phone-lobby")).toBeVisible();
+  const code = new URL(host.url()).pathname.split("/").pop()!;
+  const guest = await joinPhone(browser, code, "Guest");
+  await host.getByTestId("start-game").click();
+  await host.getByTestId("word-choice").first().click();
+  await expect(host.locator(".dd-phone-draw")).toHaveAttribute("data-side", "rail");
+
+  const feed = host.locator(".dd-phone-draw .dd-feed");
+  const guess = async (text: string) => {
+    await guest.getByTestId("guess-input").fill(text);
+    await guest.getByTestId("guess-input").press("Enter");
+    await expect(feed).toContainText(`Guest: ${text}`);
+  };
+  for (let i = 1; i <= 14; i++) await guess(`zork${i}`);
+  // Scrolled up in the rail's feed, a new guess brings up the pill. (Wait for the scroll event, not
+  // just scrollTop: the feed learns the reader has left the bottom from the event.)
+  await feed.evaluate((el) => {
+    (window as unknown as { scrolled: boolean }).scrolled = false;
+    el.addEventListener("scroll", () => ((window as unknown as { scrolled: boolean }).scrolled = true), { once: true });
+    el.scrollTop = 0;
+  });
+  await expect.poll(() => host.evaluate(() => (window as unknown as { scrolled: boolean }).scrolled)).toBe(true);
+  await guess("zork15");
+  await expect(host.getByTestId("feed-jump")).toBeVisible();
+
+  // Rotated into the 16:9 "top" layout: the strip shows the newest guess and no pill.
+  await host.setViewportSize({ width: 667, height: 375 });
+  await expect(host.locator(".dd-phone-draw")).toHaveAttribute("data-side", "top");
+  await expect(host.getByTestId("feed-jump")).toBeHidden();
+  const newestInView = () =>
+    feed.evaluate((el) => {
+      const last = el.querySelector(".dd-feed-list > :last-child")!.getBoundingClientRect();
+      const box = el.getBoundingClientRect();
+      return last.top >= box.top - 1 && last.bottom <= box.bottom + 1;
+    });
+  await expect.poll(newestInView).toBe(true);
+  await expect(feed.locator(".dd-feed-list > :last-child")).toHaveText("Guest: zork15");
+  // And it follows new guesses from there.
+  await guess("zork16");
+  await expect(host.getByTestId("feed-jump")).toBeHidden();
+  await expect.poll(newestInView).toBe(true);
+  await expect(feed.locator(".dd-feed-list > :last-child")).toHaveText("Guest: zork16");
+});
 
 test("the host kicks players from the lobby and during a game", async ({ browser }) => {
   const screen = await (await browser.newContext({ viewport: { width: 1280, height: 720 } })).newPage();
