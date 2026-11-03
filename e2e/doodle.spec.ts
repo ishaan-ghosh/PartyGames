@@ -162,10 +162,14 @@ for (const viewport of [{ width: 667, height: 375 }, { width: 844, height: 390 }
 
     // The ink lands under the pointer: the stroke ran from (0.2, 0.2) to (0.8, 0.68) of the canvas,
     // i.e. (192, 108)–(768, 367) on the 960×540 bitmap, give or take the 9px brush.
-    const ink = await inkBounds(host, "draw-canvas");
-    for (const [got, want] of [[ink.minX, 192], [ink.maxX, 768], [ink.minY, 108], [ink.maxY, 367]] as const) {
-      expect(Math.abs(got - want)).toBeLessThanOrEqual(10);
-    }
+    // Polled: CanvasView paints on the next animation frame, so straight after mouse.up the last
+    // points may not be on the bitmap yet (the stroke looks cut short). An offset never settles.
+    const want = { minX: 192, maxX: 768, minY: 108, maxY: 367 };
+    const worst = async () => {
+      const ink = await inkBounds(host, "draw-canvas");
+      return Math.max(...(Object.keys(want) as (keyof typeof want)[]).map((k) => Math.abs(ink[k] - want[k])));
+    };
+    await expect.poll(worst, { timeout: 3000, message: "ink bounds within 10px of the stroke" }).toBeLessThanOrEqual(10);
     // The sideways drawer stays in normal flow, one viewport tall, like the portrait one: iOS Safari
     // can hit-test touches on a position: fixed layer away from where it paints it, which drew
     // strokes a constant distance below the finger. Nor may any ancestor of the canvas be transformed.
