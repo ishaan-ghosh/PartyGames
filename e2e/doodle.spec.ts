@@ -53,8 +53,10 @@ test("screen + 3 phones play a turn, and a reloaded phone keeps its score", asyn
   await expect(screen.getByTestId("score-Ben")).not.toHaveText("0");
   await expect(screen.locator(".dd-feed")).not.toContainText(word);
   // Nor on any phone feed: not the other guesser's, nor Ben's own. (Ana is drawing, so her phone has no feed.)
-  await expect(cy.locator(".dd-feed")).toBeVisible();
+  // Wait for each phone to receive the correct-guess update before checking for absence.
+  await expect(cy.locator(".dd-feed")).toContainText("Ben guessed it!");
   await expect(cy.locator(".dd-feed")).not.toContainText(word);
+  await expect(ben.locator(".dd-feed")).toContainText("Ben guessed it!");
   await expect(ben.locator(".dd-feed")).not.toContainText(word);
 
   await cy.getByTestId("guess-input").fill(word);
