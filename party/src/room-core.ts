@@ -61,11 +61,33 @@ export interface SavedRoom {
   emptySince: number | null;
   /** Names of game-state parts stored under their own keys (see GameModule.splitSave). */
   parts?: string[];
+  /**
+   * The rev each part had when this record was written (see SavePlanner), so a room woken from
+   * hibernation doesn't rewrite every part on its next save. Written by the adapter, not RoomCore.
+   */
+  partRevs?: Record<string, string>;
 }
 
-export interface Handled { persist: boolean }
+/**
+ * persist: save now. dirty: state changed by a quiet action (e.g. a stroke) that need not be saved
+ * at once, but must be saved soon: the room may hibernate, which drops anything only in memory.
+ */
+export interface Handled { persist: boolean; dirty?: boolean }
 const YES: Handled = { persist: true };
 const NO: Handled = { persist: false };
+const DIRTY: Handled = { persist: false, dirty: true };
+
+/** Restoring a saved room, e.g. when the Durable Object starts or wakes from hibernation. */
+export interface Restore {
+  saved: SavedRoom;
+  now: number;
+  parts?: Record<string, unknown>;
+  /**
+   * Connection ids whose sockets are still open. After hibernation the sockets outlive the object:
+   * members saved as connected on one of these stay connected. Everyone else is marked disconnected.
+   */
+  live?: ReadonlySet<string>;
+}
 /** At most one answered `resync` per member per this long. Clients retry less often than this. */
 export const RESYNC_MIN_MS = 1000;
 const DEFAULT_AVATAR: Avatar = { emoji: "🙂", color: "#7f5af0" };
@@ -96,22 +118,42 @@ export class RoomCore {
   private s: SavedRoom;
   /** Last answered `resync` per member id (in memory only). */
   private readonly lastResync = new Map<string, number>();
+  /**
+   * True if restoring changed the saved state (someone's socket was gone, an old save was upgraded),
+   * so the adapter must save. A wake from hibernation with every socket still open changes nothing.
+   */
+  readonly restoreChanged: boolean = false;
+  /** Members restore found disconnected that were connected at save time (see announceRestore). */
+  private readonly droppedAtRestore: boolean = false;
 
   constructor(
     code: string,
     private readonly deps: CoreDeps,
     private readonly out: Outbox,
-    restore?: { saved: SavedRoom; now: number; parts?: Record<string, unknown> },
+    restore?: Restore,
   ) {
     if (restore) {
       this.s = structuredClone(restore.saved);
       const partNames = this.s.parts;
       delete this.s.parts;
+      delete this.s.partRevs;
+      let changed = false;
+      // Connected at save time but their socket is no longer open: it closed while the room hibernated
+      // (its close may even be the event that woke us, and it no longer counts as open), or a restart
+      // dropped it without any close event. Either way no onClose will find them, so they get the full
+      // disconnect treatment here. Members already offline at save time are left as they were.
+      const dropped = new Set<string>();
       for (const m of this.s.members) {
+        if (m.connId !== null && restore.live?.has(m.connId) && m.disconnectedAt === null) continue;
+        if (m.connId !== null) dropped.add(m.id);
         // Older saves lack disconnectedAt; anyone connected at save time dropped "now".
-        if (m.connId !== null || typeof m.disconnectedAt !== "number") m.disconnectedAt = restore.now;
+        if (m.connId !== null || typeof m.disconnectedAt !== "number") {
+          m.disconnectedAt = restore.now;
+          changed = true;
+        }
         m.connId = null;
       }
+      if (this.s.hostId !== null && dropped.has(this.s.hostId) && this.s.hostGoneAt === null) this.s.hostGoneAt = restore.now;
       // The saved game may no longer be registered (removed in a later deploy, or a pre-fix prototype key
       // like "constructor"): reopen in the lobby with the default game rather than crash on wake.
       if (!Object.prototype.hasOwnProperty.call(deps.games, this.s.gameId)) {
@@ -122,21 +164,31 @@ export class RoomCore {
         this.s.phase = "lobby";
         this.s.gameState = null;
         this.s.seated = [];
+        changed = true;
       }
       // Older saves lack seated; best effort is every player seat that existed.
       if (!Array.isArray(this.s.seated)) {
         this.s.seated = this.s.phase === "playing" ? this.s.members.filter((m) => m.kind === "player").map((m) => m.id) : [];
+        changed = true;
       }
-      this.s.emptySince ??= restore.now;
+      if (this.s.emptySince === null && this.connected().length === 0) {
+        this.s.emptySince = restore.now;
+        changed = true;
+      }
       if (this.s.phase === "playing" && partNames?.length && this.game.joinSave) {
         const parts = Object.fromEntries(partNames.map((n) => [n, restore.parts?.[n]]));
         this.s.gameState = this.game.joinSave(this.s.gameState, parts);
       }
+      // Only for players who went offline just now: telling the game again about someone long gone
+      // would restart its grace timers (e.g. Doodle Dash's drawer skip) on every wake.
       if (this.s.phase === "playing") {
         for (const m of this.s.members) {
-          if (m.kind === "player") this.s.gameState = this.game.onPresence(this.s.gameState, m.id, false, restore.now);
+          if (m.kind === "player" && dropped.has(m.id)) this.s.gameState = this.game.onPresence(this.s.gameState, m.id, false, restore.now);
         }
+        this.checkOver();
       }
+      this.restoreChanged = changed;
+      this.droppedAtRestore = dropped.size > 0;
     } else {
       const game = deps.games[deps.defaultGameId];
       if (!game) throw new Error(`Unknown default game ${deps.defaultGameId}`);
@@ -146,6 +198,14 @@ export class RoomCore {
         phase: "lobby", gameState: null, seated: [], lastResults: null, emptySince: null,
       };
     }
+  }
+
+  /**
+   * Call once after restoring, when the adapter can send again: if anyone was dropped, tells the
+   * members still connected (after hibernation, on their open sockets) the room as it is now.
+   */
+  announceRestore(now: number): void {
+    if (this.droppedAtRestore) this.broadcast(now);
   }
 
   get created(): boolean {
@@ -208,16 +268,26 @@ export class RoomCore {
 
   /**
    * Alarm handler. Broadcasts only if something a client can see changed: clients run countdowns from
-   * deadlines and `now`, so a watchdog or early alarm that moves nothing sends nothing.
+   * deadlines and `now`, so a watchdog or early alarm that moves nothing sends nothing. Asks for a
+   * save only if state may have changed, so an idle lobby's watchdog writes nothing.
    */
-  tick(now: number): void {
+  tick(now: number): Handled {
     const before = this.visible();
-    if (this.s.hostGoneAt !== null && now >= this.s.hostGoneAt + LIMITS.hostGraceMs) this.transferHost();
+    let changed = false;
+    if (this.s.hostGoneAt !== null && now >= this.s.hostGoneAt + LIMITS.hostGraceMs) {
+      this.transferHost();
+      changed = true;
+    }
     if (this.s.phase === "playing") {
       this.s.gameState = this.game.onTimer(this.s.gameState, now);
       this.checkOver();
+      changed = true; // game timers may change hidden state too
     }
-    if (this.visible() !== before) this.broadcast(now);
+    if (this.visible() !== before) {
+      this.broadcast(now);
+      changed = true;
+    }
+    return changed ? YES : NO;
   }
 
   nextAlarmAt(): number | null {
@@ -437,12 +507,15 @@ export class RoomCore {
     }
     const res = this.game.onAction(this.s.gameState, m.id, action, now);
     this.s.gameState = res.state;
+    // Reason code only, squeezed through label(): it is game-chosen, but must stay a short identifier.
+    if (res.rejected !== undefined) reject(label(res.rejected));
     for (const ev of res.events ?? []) {
       for (const c of this.connected()) {
         if (ev.to === "all" || c.id !== m.id) this.out.send(c.connId!, { type: "event", payload: ev.payload });
       }
     }
-    if (res.quiet) return NO;
+    // A refused quiet action changed nothing; an accepted one (a stroke) did, but is saved lazily.
+    if (res.quiet) return res.rejected !== undefined ? NO : DIRTY;
     this.checkOver();
     this.broadcast(now);
     return YES;

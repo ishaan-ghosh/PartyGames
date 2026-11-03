@@ -50,6 +50,49 @@ shared/             Protocol message types, game-module interface, design tokens
 The Room Durable Object is the **single source of truth**. Clients send *actions* and
 receive *views*. Clients never change game state themselves.
 
+### Persistence and hibernation
+
+The Room opts into WebSocket hibernation (PartyServer `static options = { hibernate: true }`): an
+idle room is evicted from memory while its sockets stay open, so it stops billing duration. The next
+message, close or alarm wakes a fresh instance, which re-runs `onStart` from storage. So everything
+that must outlive a quiet spell lives in storage or on the socket itself:
+
+- **Storage, room record (`room`):** the whole room (members, host, settings, game state minus
+  bulky parts). Each member's `connId` is the id of the socket it is bound to. The record also
+  carries `partRevs`, the rev of every stored part, written in the same atomic batch, so a woken
+  room knows what storage holds and doesn't rewrite the whole drawing on its next save.
+- **Storage, game parts (`part:*`):** the drawing in 32-stroke chunks (unchanged).
+- **Socket tags (the attachment PartyServer keeps on each socket):** a random server-made socket
+  id (`s:<uuid>`). The room uses it instead of the client's `_pk`, which PartySocket reuses across
+  reconnects. That way a half-open old socket's late close can't disconnect its replacement, and two
+  sockets never share an id. Nothing else is stored on the socket: no names, tokens or keys.
+- **Rebinding on wake:** `onStart` collects the ids of sockets still open. A member saved as
+  connected on one of them stays connected. A member saved as connected whose socket is no longer
+  open gets the full disconnect treatment during restore, because no `onClose` will find them later.
+  That covers three cases: the socket closed while the room hibernated, its close is the event that
+  woke the room (the runtime has already marked it closed), or a restart dropped it without any
+  close event. The treatment: `disconnectedAt`, `hostGoneAt` if it was the host, the game's
+  `onPresence(false)` and end check, then one broadcast to whoever is still connected. Members
+  already offline at save time are left alone. In particular the game isn't told again, which would
+  restart grace timers such as Doodle Dash's drawer skip on every wake. If restore changed nothing
+  (the normal case after hibernation), the wake writes nothing.
+- **Quiet changes (strokes):** quiet actions don't save at once. The first one marks the room
+  dirty and starts a 2 s timer (`QUIET_SAVE_MS`) that saves. Any other save before then covers it
+  and cancels the timer. A pending timer also stops the runtime from hibernating the object, so
+  strokes are never left only in memory. At most ~2 s of drawing is at risk, and only if the
+  object is torn down outright (deploy/crash), which drops the sockets anyway.
+- **Alarms:** alarms don't keep the object awake. They wake it. A playing room's game timers wake it
+  to tick. An idle lobby only has its watchdog (at most `emptyRoomTtlMs` away), and a tick that changes
+  nothing writes nothing but the next alarm.
+- **Deliberately in memory only:** per-socket rate limiters, the room's reject-log limiter, and the
+  per-member `resync` throttle. They are lost on hibernation, which is harmless because the object
+  only hibernates after a quiet spell (about 10 s). That is longer than the message limiter's and
+  the throttle's windows, so they would have reset anyway: 120 tokens at 60/s refill in 2 s, the
+  abuse streak ends after 2 s, and the resync throttle is 1 s. A flooding client never lets the room
+  go idle. The reject-log limiter (20 lines, 1/s) may allow up to ~10 extra log lines per wake. Its
+  "suppressed" count for lines dropped right before a hibernation is lost. Both are acceptable for
+  a log limiter.
+
 ### Game-module interface
 
 Each game is a module with pure, network-free functions plus React views:

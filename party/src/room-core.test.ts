@@ -4,7 +4,7 @@ import type { Rejection } from "./rate-limit";
 import { RoomCore, type CoreDeps, type Outbox } from "./room-core";
 
 interface CState { count: number; target: number; endsAt: number | null; players: string[]; names: Record<string, string>; presence: Record<string, boolean> }
-type CAction = { t: "inc" } | { t: "ping" };
+type CAction = { t: "inc" } | { t: "ping" } | { t: "refuse" };
 
 /** Tiny fake game so room behavior is tested independently of Doodle Dash. */
 const counter: GameModule<CState, CAction, { target: number }> = {
@@ -17,7 +17,7 @@ const counter: GameModule<CState, CAction, { target: number }> = {
   },
   parseAction: (input) => {
     const t = (input as { t?: unknown } | null)?.t;
-    return t === "inc" || t === "ping" ? { t } : null;
+    return t === "inc" || t === "ping" || t === "refuse" ? { t } : null;
   },
   setup: (players, settings, _seed, now) => ({
     count: 0,
@@ -28,7 +28,11 @@ const counter: GameModule<CState, CAction, { target: number }> = {
     presence: {},
   }),
   onAction: (s, _id, a) =>
-    a.t === "ping" ? { state: s, quiet: true, events: [{ to: "others", payload: "pong" }] } : { state: { ...s, count: s.count + 1 } },
+    a.t === "refuse"
+      ? { state: s, quiet: true, rejected: "not_allowed" }
+      : a.t === "ping"
+        ? { state: s, quiet: true, events: [{ to: "others", payload: "pong" }] }
+        : { state: { ...s, count: s.count + 1 } },
   onTimer: (s, now) => (s.endsAt !== null && now >= s.endsAt ? { ...s, count: s.count + 1, endsAt: null } : s),
   nextTimerAt: (s) => s.endsAt,
   onPresence: (s, id, connected) => ({ ...s, presence: { ...s.presence, [id]: connected } }),
@@ -202,10 +206,10 @@ describe("RoomCore: host commands and games", () => {
     expect(h.last("c2", "view")!.payload).toMatchObject({ count: 1 });
   });
 
-  it("relays quiet events to everyone but the sender without persisting", () => {
+  it("relays quiet events to everyone but the sender without persisting at once (marked dirty instead)", () => {
     const h = started();
     const viewsBefore = h.msgs("c2", "view").length;
-    expect(h.core.message("c1", { type: "action", payload: { t: "ping" } }, 1)).toEqual({ persist: false });
+    expect(h.core.message("c1", { type: "action", payload: { t: "ping" } }, 1)).toEqual({ persist: false, dirty: true });
     expect(h.last("c2", "event")?.payload).toBe("pong");
     expect(h.last("s1", "event")?.payload).toBe("pong");
     expect(h.last("c1", "event")).toBeUndefined();
@@ -385,6 +389,108 @@ describe("RoomCore: host handoff and lifetime", () => {
     restored.message("n1", { type: "hello", role: "player", token }, 6000);
     expect(sent2.find((s) => s.to === "n1" && s.msg.type === "welcome")).toMatchObject({ msg: { you: { id: h.id("c1") } } });
     expect(sent2.filter((s) => s.to === "n1" && s.msg.type === "view").at(-1)?.msg).toMatchObject({ payload: { count: 1 } });
+  });
+
+  it("after hibernation, keeps members whose sockets are still open connected and changes nothing", () => {
+    const h = started();
+    h.core.message("c1", { type: "action", payload: { t: "inc" } }, 1);
+    const saved = h.core.serialize();
+    const sent2: { to: string; msg: ServerMsg }[] = [];
+    const out2: Outbox = { send: (to, msg) => sent2.push({ to, msg }), close: () => {} };
+    const woken = new RoomCore("ABCD", h.deps, out2, { saved, now: 5000, live: new Set(["s1", "c1", "c2"]) });
+    expect(woken.restoreChanged).toBe(false);
+    expect(woken.serialize()).toEqual(saved);
+    // The same sockets carry on without a new hello.
+    expect(woken.message("c1", { type: "action", payload: { t: "inc" } }, 6000)).toEqual({ persist: true });
+    expect(sent2.filter((s) => s.to === "c2" && s.msg.type === "view").at(-1)?.msg).toMatchObject({ payload: { count: 2 } });
+    expect(woken.snapshot().players.every((p) => p.connected)).toBe(true);
+  });
+
+  it("after hibernation, marks only members whose sockets closed meanwhile as gone", () => {
+    const h = started();
+    const saved = h.core.serialize();
+    const out2: Outbox = { send: () => {}, close: () => {} };
+    const woken = new RoomCore("ABCD", h.deps, out2, { saved, now: 5000, live: new Set(["s1", "c1"]) });
+    expect(woken.restoreChanged).toBe(true);
+    const s = woken.serialize();
+    expect(s.members.find((m) => m.id === h.id("c2"))).toMatchObject({ connId: null, disconnectedAt: 5000 });
+    expect(s.members.find((m) => m.id === h.id("c1"))).toMatchObject({ connId: "c1", disconnectedAt: null });
+    expect((s.gameState as CState).presence).toEqual({ [h.id("c2")]: false });
+    expect(s.emptySince).toBeNull();
+    // A socket that is open but unknown to the save (it never said hello) binds nobody.
+    const other = new RoomCore("ABCD", h.deps, out2, { saved, now: 5000, live: new Set(["zz"]) });
+    expect(other.snapshot().players.some((p) => p.connected)).toBe(false);
+    expect(other.serialize().emptySince).toBe(5000);
+  });
+
+  it("gives members whose socket closed during hibernation the full disconnect treatment", () => {
+    const h = started();
+    const saved = h.core.serialize();
+    const sent2: { to: string; msg: ServerMsg }[] = [];
+    const out2: Outbox = { send: (to, msg) => sent2.push({ to, msg }), close: () => {} };
+    // The host screen (s1) and Ben (c2) closed while the room slept; only Ana's socket is still open.
+    const woken = new RoomCore("ABCD", h.deps, out2, { saved, now: 5000, live: new Set(["c1"]) });
+    const s = woken.serialize();
+    expect(s.hostGoneAt).toBe(5000); // so the host is handed over after its grace
+    expect((s.gameState as CState).presence).toEqual({ [h.id("c2")]: false });
+    expect(sent2).toEqual([]);
+    woken.announceRestore(5000);
+    const room = sent2.filter((x) => x.to === "c1" && x.msg.type === "room").at(-1)!.msg as Extract<ServerMsg, { type: "room" }>;
+    expect(room.room.players.find((p) => p.id === h.id("c2"))!.connected).toBe(false);
+    expect(room.room.screens[0]!.connected).toBe(false);
+    woken.tick(5000 + LIMITS.hostGraceMs);
+    expect(woken.snapshot().hostId).toBe(h.id("c1"));
+    // The late onClose of a socket restore already dropped changes nothing.
+    expect(woken.disconnect("c2", 6000)).toEqual({ persist: false });
+  });
+
+  it("ends a game on restore if the players lost meanwhile leave it over", () => {
+    const g: GameModule<CState, CAction, { target: number }> = {
+      ...counter,
+      isOver: (st) => st.count >= st.target || Object.values(st.presence).includes(false),
+    };
+    const h = setup({ game: g });
+    h.screen("s1", { hostKey: "HOSTKEY" });
+    h.player("c1", "Ana");
+    h.player("c2", "Ben");
+    h.host("s1", { cmd: "start" });
+    const woken = new RoomCore("ABCD", h.deps, { send: () => {}, close: () => {} }, { saved: h.core.serialize(), now: 5000, live: new Set(["s1", "c1"]) });
+    expect(woken.serialize().phase).toBe("lobby");
+  });
+
+  it("does not re-announce players who were already offline at save time to the game", () => {
+    const calls: string[] = [];
+    const g: GameModule<CState, CAction, { target: number }> = {
+      ...counter,
+      onPresence: (st, id, connected, now) => {
+        calls.push(`${id}:${connected}@${now}`);
+        return counter.onPresence(st, id, connected, now);
+      },
+    };
+    const h = setup({ game: g });
+    h.screen("s1", { hostKey: "HOSTKEY" });
+    h.player("c1", "Ana");
+    h.player("c2", "Ben");
+    h.player("c3", "Cat");
+    h.host("s1", { cmd: "start" });
+    h.core.disconnect("c2", 100); // Ben left before the save
+    const saved = h.core.serialize();
+    calls.length = 0;
+    // Wake with everyone else still connected: the game hears nothing.
+    new RoomCore("ABCD", h.deps, { send: () => {}, close: () => {} }, { saved, now: 5000, live: new Set(["s1", "c1", "c3"]) });
+    expect(calls).toEqual([]);
+    // Cat's socket closed meanwhile: only Cat is reported, not Ben again.
+    new RoomCore("ABCD", h.deps, { send: () => {}, close: () => {} }, { saved, now: 5000, live: new Set(["s1", "c1"]) });
+    expect(calls).toEqual([`${h.id("c3")}:false@5000`]);
+  });
+
+  it("asks for a save on tick only when something may have changed", () => {
+    const l = lobby();
+    expect(l.core.tick(5_000)).toEqual({ persist: false }); // idle lobby watchdog
+    l.core.disconnect("s1", 6_000);
+    expect(l.core.tick(6_000 + LIMITS.hostGraceMs)).toEqual({ persist: true }); // host handed over
+    const g = started();
+    expect(g.core.tick(10)).toEqual({ persist: true }); // game timers may change hidden state
   });
 
   it("falls back to the default game in the lobby when the saved game isn't registered", () => {
@@ -732,7 +838,31 @@ describe("RoomCore: logging rejected messages", () => {
   it("does not report accepted messages", () => {
     const h = started();
     h.core.message("c1", { type: "action", payload: { t: "inc" } }, 0);
+    h.core.message("c1", { type: "action", payload: { t: "ping" } }, 0); // quiet, but accepted
     expect(h.rejects).toEqual([]);
+  });
+
+  it("reports moves the game refuses, with type and reason only, and keeps them quiet", () => {
+    const h = started();
+    const before = h.sent.length;
+    expect(h.core.message("c1", { type: "action", payload: { t: "refuse", text: "secret" } }, 0)).toEqual({ persist: false });
+    expect(h.sent.length).toBe(before);
+    expect(h.rejects).toEqual([{ conn: "c1", player: h.id("c1"), type: "action:refuse", reason: "not_allowed" }]);
+    expect(JSON.stringify(h.rejects)).not.toContain("secret");
+  });
+
+  it("squeezes a game's refusal reason into a short label", () => {
+    const g: GameModule<CState, CAction, { target: number }> = {
+      ...counter,
+      onAction: (s) => ({ state: s, quiet: true, rejected: "free text\nwith a guess in it" }),
+    };
+    const h = setup({ game: g });
+    h.screen("s1", { hostKey: "HOSTKEY" });
+    h.player("c1", "Ana");
+    h.player("c2", "Ben");
+    h.host("s1", { cmd: "start" });
+    h.core.message("c1", { type: "action", payload: { t: "inc" } }, 0);
+    expect(h.rejects).toEqual([{ conn: "c1", player: h.id("c1"), type: "action:inc", reason: "?" }]);
   });
 });
 

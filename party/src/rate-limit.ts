@@ -58,7 +58,10 @@ export class RejectLog {
   }
 }
 
-/** Longest connection id written to logs. Real ids are UUIDs (36 chars); clients can pick their own via `_pk`. */
+/**
+ * Longest connection id written to logs. The room logs its own socket ids ("s:" + a UUID, 38 chars),
+ * not the client-chosen `_pk`; the cap and printable() stay as a guard for any id passed in.
+ */
 export const CONN_LOG_MAX = 64;
 
 /**
