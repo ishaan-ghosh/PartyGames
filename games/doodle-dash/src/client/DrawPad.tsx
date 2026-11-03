@@ -200,14 +200,16 @@ export function DrawPad({ strokes, setStrokes, send, activity, fillsLeft: server
     else begin(x, y);
   };
 
-  const begin = (x: number, y: number) => {
-    if (tool === "fill") return; // fills never get here (see down); this narrows the type
+  /** Starts a stroke; false (nothing sent) if the tool is now the fill, which never strokes. */
+  const begin = (x: number, y: number): boolean => {
+    if (tool === "fill") return false;
     last.current = [x, y];
     const id = localId.current--;
     const key = strokeKey.current === null ? firstStrokeKey() : nextStrokeKey(strokeKey.current);
     strokeKey.current = key;
     io.send({ t: "strokeBegin", id: key, tool, color, size, points: [x, y] });
     setStrokes((s) => [...s, { id, tool, color, size, points: [x, y] }]);
+    return true;
   };
 
   const move = (e: PointerEvent<HTMLCanvasElement>) => {
@@ -217,7 +219,12 @@ export function DrawPad({ strokes, setStrokes, send, activity, fillsLeft: server
     if (w) {
       if (!marginStrokeBegins(w.client, e.clientX, e.clientY, rect, MARGIN_SLOP)) return;
       waiting.current = null;
-      begin(...w.point);
+      // A second finger picked the fill while this one waited off the canvas: no stroke, and no
+      // points either (they would be appended to the previous stroke, under its key).
+      if (!begin(...w.point)) {
+        io.end();
+        return;
+      }
     }
     const [x, y] = normalizePoint(e.clientX, e.clientY, rect);
     if (Math.hypot(x - last.current[0], y - last.current[1]) < 0.002) return;
