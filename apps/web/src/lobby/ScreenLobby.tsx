@@ -46,6 +46,8 @@ export function ScreenLobby({ room, isHost, online, sendHost }: {
         </div>
         <p className="code-hint">Scan with your phone camera</p>
       </section>
+      {/* Its own grid cell: under the QR on wide screens, so it never squeezes the host panel. */}
+      {room.lastResults && <Results results={room.lastResults} />}
       <section className="players-panel">
         <h2>{count ? `${count} player${count === 1 ? "" : "s"} in` : "Waiting for players…"}</h2>
         <div className="players-grid">
@@ -63,7 +65,6 @@ export function ScreenLobby({ room, isHost, online, sendHost }: {
             </Fragment>
           ))}
         </div>
-        {room.lastResults && <Results results={room.lastResults} />}
         {isHost ? (
           <HostPanel room={room} sendHost={sendHost} online={online} />
         ) : (

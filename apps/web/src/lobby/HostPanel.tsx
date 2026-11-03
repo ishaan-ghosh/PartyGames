@@ -16,21 +16,24 @@ export function HostPanel({ room, sendHost, online }: {
   return (
     <section className="host-panel card">
       <h2>Pick a game</h2>
-      <GameLibrary
-        selected={room.gameId}
-        disabled={!online}
-        onSelect={(gameId) => sendHost({ cmd: "selectGame", gameId })}
-      />
-      {game && (
-        <>
-          <h3>Settings</h3>
-          <game.Settings
-            settings={room.settings}
-            onChange={(settings) => sendHost({ cmd: "updateSettings", settings })}
-            disabled={!online}
-          />
-        </>
-      )}
+      {/* Scrolls on its own on the TV lobby so the Start button below stays on screen. */}
+      <div className="host-panel-body">
+        <GameLibrary
+          selected={room.gameId}
+          disabled={!online}
+          onSelect={(gameId) => sendHost({ cmd: "selectGame", gameId })}
+        />
+        {game && (
+          <>
+            <h3>Settings</h3>
+            <game.Settings
+              settings={room.settings}
+              onChange={(settings) => sendHost({ cmd: "updateSettings", settings })}
+              disabled={!online}
+            />
+          </>
+        )}
+      </div>
       <Button
         size="xl"
         data-testid="start-game"
