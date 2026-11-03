@@ -1,11 +1,12 @@
 import { Button, type GameClientProps } from "@party/ui";
 import { useRef } from "react";
 import type { DoodleAction, DoodleView } from "../rules";
-import { CanvasView } from "./CanvasView";
+import { CanvasView, canvasVars } from "./CanvasView";
 import { DrawPad } from "./DrawPad";
 import { useFitWord } from "./fitWord";
 import { Feed, GuessForm, Hint, PhaseTimer, Reveal, Waiting } from "./parts";
 import { drawerSeesFeed } from "./phase";
+import { useSidewaysLayout } from "./sideways";
 import { useDoodleSounds } from "./useDoodleSounds";
 import { useStrokes } from "./useStrokes";
 
@@ -21,7 +22,10 @@ export function DoodlePhone(p: GameClientProps<DoodleView>) {
   const showCanvas = mode === "phones";
   const waiting = view.waiting === true;
   const secretRef = useRef<HTMLParagraphElement>(null);
-  useFitWord(secretRef, isDrawer && view.phase === "drawing" ? `${view.turnKey}|${view.word ?? ""}` : null);
+  const drawRef = useRef<HTMLDivElement>(null);
+  const drawing = isDrawer && view.phase === "drawing";
+  useFitWord(secretRef, drawing ? `${view.turnKey}|${view.word ?? ""}` : null);
+  useSidewaysLayout(drawRef, drawing);
 
   const header = (
     <header className="dd-phone-top">
@@ -33,7 +37,7 @@ export function DoodlePhone(p: GameClientProps<DoodleView>) {
 
   if (role === "spectator") {
     return (
-      <div className="phone dd-phone">
+      <div className="phone dd-phone" style={canvasVars}>
         {header}
         <p className="dd-note">You joined mid-game. You'll be in the next one!</p>
         {waiting && <Waiting view={view} />}
@@ -58,10 +62,10 @@ export function DoodlePhone(p: GameClientProps<DoodleView>) {
 
   if (isDrawer && view.phase === "drawing") {
     // Phones-only: no TV to watch guesses on, so the drawer gets a compact feed (doodle.css fits
-    // it above or beside the canvas). It is the drawer's own view.feed, so it shows nothing new.
+    // it above the canvas upright; sideways, in the rail or as a one-line strip by the word). It is the drawer's own view.feed, so it shows nothing new.
     const withFeed = drawerSeesFeed(mode);
     return (
-      <div className={`phone dd-phone dd-phone-draw${withFeed ? " dd-phone-draw-feed" : ""}`}>
+      <div ref={drawRef} className={`phone dd-phone dd-phone-draw${withFeed ? " dd-phone-draw-feed" : ""}`} style={canvasVars}>
         {header}
         <p className="dd-secret" ref={secretRef}><span className="dd-secret-label">Draw: </span><strong data-testid="secret-word">{view.word}</strong></p>
         {withFeed && <Feed items={view.feed} players={view.players} compact />}
@@ -72,7 +76,7 @@ export function DoodlePhone(p: GameClientProps<DoodleView>) {
 
   const solved = role === "solver";
   return (
-    <div className="phone dd-phone">
+    <div className={`phone dd-phone${showCanvas ? " dd-phone-watch" : ""}`} style={canvasVars}>
       {header}
       {waiting && <Waiting view={view} />}
       {view.phase === "choosing" && <p className="dd-note">{drawer?.name ?? "Someone"} is choosing a word…</p>}

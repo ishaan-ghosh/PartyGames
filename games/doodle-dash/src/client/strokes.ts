@@ -1,7 +1,6 @@
-import { BRUSH_SIZES, MAX_FILLS, MAX_POINTS_PER_BATCH, PALETTE, type Stroke, type StrokeOp } from "../rules";
+import { BRUSH_SIZES, CANVAS_H, CANVAS_W, MAX_FILLS, MAX_POINTS_PER_BATCH, PALETTE, type Stroke, type StrokeOp } from "../rules";
 
-export const CANVAS_W = 800;
-export const CANVAS_H = 600;
+export { CANVAS_H, CANVAS_W };
 
 export function applyOp(strokes: Stroke[], op: StrokeOp): Stroke[] {
   switch (op.op) {
@@ -112,11 +111,15 @@ export function clearCanvas(ctx: CanvasRenderingContext2D): void {
   ctx.fillRect(0, 0, CANVAS_W, CANVAS_H);
 }
 
+/** The bitmap pixel a normalised (0–1) fill point seeds from. */
+export function fillPixel(x: number, y: number): [number, number] {
+  return [Math.min(CANVAS_W - 1, Math.floor(x * CANVAS_W)), Math.min(CANVAS_H - 1, Math.floor(y * CANVAS_H))];
+}
+
 export function drawStroke(ctx: CanvasRenderingContext2D, s: Stroke): void {
   if (s.tool === "fill") {
     const img = ctx.getImageData(0, 0, CANVAS_W, CANVAS_H);
-    const x = Math.min(CANVAS_W - 1, Math.floor(s.x * CANVAS_W));
-    const y = Math.min(CANVAS_H - 1, Math.floor(s.y * CANVAS_H));
+    const [x, y] = fillPixel(s.x, s.y);
     floodFillData(img.data, CANVAS_W, CANVAS_H, x, y, hexToRgb(PALETTE[s.color] ?? "#000000"));
     ctx.putImageData(img, 0, 0);
     return;

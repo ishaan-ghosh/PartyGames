@@ -1,6 +1,15 @@
-import { useEffect, useRef, type CanvasHTMLAttributes } from "react";
+import { useEffect, useRef, type CanvasHTMLAttributes, type CSSProperties } from "react";
 import type { Stroke } from "../rules";
 import { CANVAS_H, CANVAS_W, clearCanvas, drawStroke, planRender } from "./strokes";
+
+/**
+ * The canvas's shape for doodle.css, set on each view's root element: --dd-aspect for
+ * aspect-ratio, --dd-ar (width / height) for calc(). The single source is CANVAS_W × CANVAS_H.
+ */
+export const canvasVars = {
+  "--dd-aspect": `${CANVAS_W} / ${CANVAS_H}`,
+  "--dd-ar": String(Math.round((CANVAS_W / CANVAS_H) * 1e5) / 1e5),
+} as CSSProperties;
 
 type PointerProps = Pick<
   CanvasHTMLAttributes<HTMLCanvasElement>,
@@ -23,7 +32,7 @@ function makeSnapshot(): Snapshot | null {
   return { ctx, strokes: [] };
 }
 
-/** Fixed 800×600 backing store, CSS-scaled, so every device renders identical pixels. */
+/** Fixed CANVAS_W×CANVAS_H (16:9) backing store, CSS-scaled, so every device renders identical pixels. */
 export function CanvasView({
   strokes,
   testId,

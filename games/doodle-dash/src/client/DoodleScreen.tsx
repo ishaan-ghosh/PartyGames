@@ -1,6 +1,6 @@
 import { PlayerChip, type GameClientProps } from "@party/ui";
 import type { DoodleView } from "../rules";
-import { CanvasView } from "./CanvasView";
+import { CanvasView, canvasVars } from "./CanvasView";
 import { Feed, Hint, PhaseTimer, Reveal, Scoreboard, Waiting } from "./parts";
 import { useDoodleSounds } from "./useDoodleSounds";
 import { useStrokes } from "./useStrokes";
@@ -13,7 +13,7 @@ export function DoodleScreen(p: GameClientProps<DoodleView>) {
   useDoodleSounds(view, p.soundOn, serverNow);
   const drawer = view.players.find((x) => x.id === view.drawerId);
   return (
-    <div className="dd-screen">
+    <div className="dd-screen" style={canvasVars}>
       <header className="dd-top">
         <span className="dd-round">Round {view.round} / {view.rounds}</span>
         <Hint hint={view.hint} big />
