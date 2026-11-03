@@ -218,17 +218,20 @@ html.dd-no-overscroll, html.dd-no-overscroll body { overscroll-behavior: none; }
  * ---- Sideways phone (short landscape screens; tablets and laptops are taller than 500px) ----
  * Drawer: the canvas fills the full height on the left; a column on the right holds the word,
  * colours, tools, the feed (phones-only) and, at the foot beside the mute toggle, round/score/timer.
- * Fixed to the viewport so the shell's 72px bottom band doesn't cost the canvas height; when the
- * host bar (bottom-left) is shown, the canvas cell keeps clear of it instead.
+ * One viewport tall and pulled down over the shell's 72px bottom band (negative margin), so the band
+ * doesn't cost the canvas height and the page still never scrolls; when the host bar (bottom-left)
+ * is shown, the canvas cell keeps clear of it instead.
+ * Not position: fixed: iOS Safari can paint a fixed layer away from where it hit-tests touches
+ * (e.g. once the guess keyboard or a toolbar change has left the page scrolled): strokes landed a
+ * constant distance below the finger. In normal flow, like the portrait drawer, paint and touches agree.
  * The TV screen view (.dd-screen) is a different component and never matches these selectors.
  */
 @media (orientation: landscape) and (max-height: 500px) {
   .dd-phone.dd-phone-draw {
-    position: fixed;
-    inset: 0;
-    height: auto;
+    height: 100vh;
+    height: 100dvh;
     max-width: none;
-    margin: 0;
+    margin: 0 0 calc(-1 * var(--stage-chrome-bottom, 0px));
     padding: max(6px, env(safe-area-inset-top)) max(8px, env(safe-area-inset-right)) max(6px, env(safe-area-inset-bottom)) max(8px, env(safe-area-inset-left));
     grid-template-columns: minmax(0, 1fr) clamp(240px, 38vw, 300px);
     grid-template-rows: auto auto auto minmax(0, 1fr) auto;
