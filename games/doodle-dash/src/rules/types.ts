@@ -37,11 +37,17 @@ export type Stroke =
   | { id: number; tool: "pen" | "eraser"; color: number; size: number; points: number[] }
   | { id: number; tool: "fill"; color: number; x: number; y: number };
 
+/**
+ * The stroke channel (room `event`s). `seq` is the stroke version (DoodleState.opSeq): each live op
+ * moves it by one. "sync" is the whole list at `seq`, sent only to one connection on (re)join or when
+ * it asks with `resync`; views carry just `opSeq` and a shape signature so clients can spot gaps.
+ */
 export type StrokeOp =
   | { op: "begin"; seq: number; stroke: Stroke }
   | { op: "append"; seq: number; strokeId: number; points: number[] }
   | { op: "undo"; seq: number }
-  | { op: "clear"; seq: number };
+  | { op: "clear"; seq: number }
+  | { op: "sync"; seq: number; strokes: Stroke[] };
 
 /**
  * `id` on strokeBegin/strokeAppend is the drawer client's own stroke id (0..2^31-1), not the server's
@@ -77,7 +83,7 @@ export interface DoodleState {
   solvers: string[]; // in order of guessing
   turnPoints: Record<string, number>;
   strokes: Stroke[];
-  opSeq: number; // increases forever; clients drop stale ops
+  opSeq: number; // stroke version: +1 per accepted stroke op and per turn wipe; clients drop stale ops
   nextStrokeId: number;
   /**
    * The drawer's id (`key`) for the last strokeBegin and the server stroke it created. Appends must

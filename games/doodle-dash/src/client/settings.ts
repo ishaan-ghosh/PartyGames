@@ -1,3 +1,10 @@
+import type { DoodleSettings, PublicDoodleSettings } from "../rules";
+
+/** The room hid the custom words from this device (a TV host): the form only has their count. */
+export function wordsHidden(s: DoodleSettings | PublicDoodleSettings): s is PublicDoodleSettings {
+  return !Array.isArray((s as Partial<DoodleSettings>).customWords);
+}
+
 export const splitWords = (text: string): string[] => text.split(",").map((w) => w.trim()).filter(Boolean);
 
 const sameWords = (text: string, list: readonly string[]) =>

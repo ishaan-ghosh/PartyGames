@@ -19,6 +19,8 @@ export interface GameClientProps<V = unknown> {
   mode: "screen" | "phones";
   send(action: unknown, opts?: SendOptions): void;
   onEvent(cb: (payload: unknown) => void): () => void;
+  /** Asks the room for the game's full-picture event again (GameModule.sync). Dropped while offline. */
+  resync(): void;
   serverNow(): number;
   soundOn: boolean;
 }

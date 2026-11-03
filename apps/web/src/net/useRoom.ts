@@ -10,6 +10,7 @@ export interface RoomConnection extends ClientRoomState {
   sendAction(payload: unknown, opts?: LooseSend): void;
   sendHost(cmd: HostCommand): void;
   onEvent(cb: (payload: unknown) => void): () => void;
+  resync(): void;
   serverNow(): number;
 }
 
@@ -106,6 +107,10 @@ export function useRoom(code: string, hello: HelloInfo | null): RoomConnection {
   const sendHost = useCallback((cmd: HostCommand) => {
     outboxRef.current?.sendNow(JSON.stringify({ type: "host", cmd }));
   }, []);
+  // Not queued: a resync from before a reconnect is moot, since the room re-sends sync events on hello.
+  const resync = useCallback(() => {
+    outboxRef.current?.sendNow(JSON.stringify({ type: "resync" }));
+  }, []);
   const onEvent = useCallback((cb: (payload: unknown) => void) => {
     listeners.current.add(cb);
     return () => {
@@ -114,5 +119,5 @@ export function useRoom(code: string, hello: HelloInfo | null): RoomConnection {
   }, []);
   const serverNow = useCallback(() => Date.now() + offset.current, []);
 
-  return { ...state, sendAction, sendHost, onEvent, serverNow };
+  return { ...state, sendAction, sendHost, resync, onEvent, serverNow };
 }

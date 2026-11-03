@@ -38,14 +38,14 @@ const counter: GameModule<CState, CAction, { target: number }> = {
   results: (s) => s.players.map((id) => ({ playerId: id, name: s.names[id] ?? "?", score: s.count })),
 };
 
-function setup(opts: { created?: boolean } = {}) {
+function setup(opts: { created?: boolean; game?: GameModule<CState, CAction, { target: number }> } = {}) {
   const sent: { to: string; msg: ServerMsg }[] = [];
   const closed: string[] = [];
   /** Sends and closes in the order they happened, e.g. "send:c1:error" / "close:c1". */
   const log: string[] = [];
   const rejects: Rejection[] = [];
   let n = 0;
-  const deps: CoreDeps = { newId: () => `id${++n}`, newSeed: () => 7, games: { counter }, defaultGameId: "counter" };
+  const deps: CoreDeps = { newId: () => `id${++n}`, newSeed: () => 7, games: { counter: opts.game ?? counter }, defaultGameId: "counter" };
   const out: Outbox = {
     send: (to, msg) => {
       sent.push({ to, msg });
@@ -775,5 +775,114 @@ describe("RoomCore: tick only broadcasts visible changes", () => {
     h.core.message("c1", { type: "action", payload: { t: "inc" } }, 20);
     h.core.tick(1000); // third count reaches the target of 3
     expect(h.last("c1", "room")!.room).toMatchObject({ phase: "lobby", lastResults: expect.any(Array) });
+  });
+});
+
+describe("RoomCore: private settings", () => {
+  /** Counter whose settings hide `target` from everyone but a host on a phone, and keep it when omitted. */
+  const secretive: GameModule<CState, CAction, { target: number }> = {
+    ...counter,
+    parseSettings: (input, prev) => {
+      const t = (input as { target?: unknown } | null)?.target;
+      return { target: typeof t === "number" ? t : (prev?.target ?? 3) };
+    },
+    publicSettings: (s, to) => (to.isHost && to.kind === "player" ? s : { hidden: true }),
+  };
+  const settingsOf = (h: ReturnType<typeof setup>, conn: string) => h.last(conn, "room")!.room.settings;
+
+  it("sends each connection the game's public settings for it: full only to a host player", () => {
+    const h = setup({ game: secretive });
+    h.player("c1", "Ana", { hostKey: "HOSTKEY" });
+    h.player("c2", "Ben");
+    h.screen("s1");
+    h.host("c1", { cmd: "updateSettings", settings: { target: 9 } });
+    expect(settingsOf(h, "c1")).toEqual({ target: 9 });
+    expect(settingsOf(h, "c2")).toEqual({ hidden: true });
+    expect(settingsOf(h, "s1")).toEqual({ hidden: true });
+    expect(h.core.serialize().settings).toEqual({ target: 9 });
+  });
+
+  it("tells the game the room's phase, so it can hide more during play", () => {
+    const seen: string[] = [];
+    const h = setup({ game: { ...secretive, publicSettings: (s, to) => (seen.push(to.phase), s) } });
+    h.player("c1", "Ana", { hostKey: "HOSTKEY" });
+    h.player("c2", "Ben");
+    expect(new Set(seen)).toEqual(new Set(["lobby"]));
+    seen.length = 0;
+    h.host("c1", { cmd: "start" });
+    expect(new Set(seen)).toEqual(new Set(["playing"]));
+  });
+
+  it("hides them from a screen even when it is the host", () => {
+    const h = setup({ game: secretive });
+    h.screen("s1", { hostKey: "HOSTKEY" });
+    h.player("c1", "Ana");
+    expect(settingsOf(h, "s1")).toEqual({ hidden: true });
+  });
+
+  it("passes the current settings to the parser so a partial update keeps hidden fields", () => {
+    const h = setup({ game: secretive });
+    h.player("c1", "Ana", { hostKey: "HOSTKEY" });
+    h.host("c1", { cmd: "updateSettings", settings: { target: 9 } });
+    h.host("c1", { cmd: "updateSettings", settings: { hidden: true } });
+    expect(h.core.serialize().settings).toEqual({ target: 9 });
+  });
+});
+
+describe("RoomCore: game sync events", () => {
+  /** Counter whose `sync` returns the full count, tagged with who it was built for. */
+  const synced: GameModule<CState, CAction, { target: number }> = {
+    ...counter,
+    sync: (s, v) => ({ sync: s.count, for: v.kind === "screen" ? "screen" : v.playerId }),
+  };
+  const syncs = (h: ReturnType<typeof setup>, conn: string) =>
+    h.msgs(conn, "event").map((m) => (m as { payload: unknown }).payload).filter((p) => (p as { sync?: number }).sync !== undefined);
+  function startedSynced() {
+    const h = setup({ game: synced });
+    h.screen("s1", { hostKey: "HOSTKEY" });
+    h.player("c1", "Ana");
+    h.player("c2", "Ben");
+    h.host("s1", { cmd: "start" }, 0);
+    return h;
+  }
+
+  it("sends the sync event to a connection that joins or rejoins mid-game, after its view", () => {
+    const h = startedSynced();
+    expect(syncs(h, "c1")).toEqual([]); // starting a game sends none
+    h.core.message("c1", { type: "action", payload: { t: "inc" } }, 1);
+    const { token } = h.last("c1", "welcome")!;
+    h.core.disconnect("c1", 2);
+    h.log.length = 0;
+    h.core.message("c9", { type: "hello", role: "player", token }, 3);
+    expect(syncs(h, "c9")).toEqual([{ sync: 1, for: h.id("c9") }]);
+    expect(h.log.filter((l) => l.startsWith("send:c9"))).toEqual(["send:c9:welcome", "send:c9:room", "send:c9:view", "send:c9:event"]);
+    expect(syncs(h, "c2")).toEqual([]); // only the joiner
+    h.screen("s2", {}, 3);
+    expect(syncs(h, "s2")).toEqual([{ sync: 1, for: "screen" }]);
+  });
+
+  it("answers resync with the sync event to that connection only, at most once a second", () => {
+    const h = startedSynced();
+    expect(h.core.message("s1", { type: "resync" }, 100)).toEqual({ persist: false });
+    expect(syncs(h, "s1")).toEqual([{ sync: 0, for: "screen" }]);
+    expect(syncs(h, "c1")).toEqual([]);
+    h.core.message("s1", { type: "resync" }, 900);
+    expect(syncs(h, "s1")).toHaveLength(1);
+    h.core.message("s1", { type: "resync" }, 1100);
+    expect(syncs(h, "s1")).toHaveLength(2);
+    h.core.message("c1", { type: "resync" }, 1100); // throttled per connection
+    expect(syncs(h, "c1")).toEqual([{ sync: 0, for: h.id("c1") }]);
+  });
+
+  it("ignores resync in the lobby, before hello, and for games without sync", () => {
+    const h = setup({ game: synced });
+    h.core.message("c0", { type: "resync" }, 0);
+    expect(h.last("c0", "error")?.code).toBe("BAD_MESSAGE");
+    h.player("c1", "Ana");
+    h.core.message("c1", { type: "resync" }, 0);
+    expect(h.msgs("c1", "event")).toEqual([]);
+    const plain = started();
+    plain.core.message("c1", { type: "resync" }, 5000);
+    expect(plain.msgs("c1", "event")).toEqual([]);
   });
 });
