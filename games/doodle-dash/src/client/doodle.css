@@ -134,6 +134,13 @@
 .dd-tools { display: contents; }
 .dd-rail-btns { display: none; }
 html.dd-no-overscroll, html.dd-no-overscroll body { overscroll-behavior: none; }
+/*
+ * A stroke may start in the margin round the canvas (DrawPad's BLEED), which lies on the drawer's
+ * view, the pad and the word around it: no panning or zooming from a touch that starts on them.
+ * Browsers (iOS Safari included) apply touch-action up to the nearest scrolling box, so the feed,
+ * the palette and tool rows and the pull-out panel, which scroll, keep their own.
+ */
+.dd-phone-draw { touch-action: none; }
 .dd-secret { margin: 0; text-align: center; font: 600 1.15rem var(--font-display); }
 .dd-secret strong { color: var(--warn); font-size: 1.6rem; }
 /*

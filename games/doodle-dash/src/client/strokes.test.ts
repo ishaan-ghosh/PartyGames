@@ -9,9 +9,12 @@ import {
   firstStrokeKey,
   floodFillData,
   hexToRgb,
+  inEdges,
+  marginStrokeBegins,
   nextStrokeKey,
   normalizePoint,
   planRender,
+  strokeReach,
 } from "./strokes";
 
 const pen = (id: number, points: number[]): Stroke => ({ id, tool: "pen", color: 0, size: 0, points });
@@ -66,6 +69,63 @@ describe("floodFillData", () => {
 
   it("parses hex colors", () => {
     expect(hexToRgb("#ff8906")).toEqual([255, 137, 6]);
+  });
+});
+
+describe("strokeReach", () => {
+  const box = (left: number, top: number, right: number, bottom: number) => ({ left, top, right, bottom });
+  const noPad = box(0, 0, 0, 0);
+
+  it("is the canvas plus the bleed where the cell is the canvas and away from the view's edges", () => {
+    const canvas = box(100, 50, 500, 350);
+    expect(strokeReach(canvas, canvas, box(0, 0, 1000, 1000), box(16, 16, 16, 16), 28)).toEqual(box(72, 22, 528, 378));
+  });
+
+  it("upright: reaches past the screen edges at the sides, the bleed above and below", () => {
+    const canvas = box(16, 200, 396, 413.75);
+    expect(strokeReach(canvas, canvas, box(0, 0, 412, 800), box(16, 16, 16, 8), 28)).toEqual(box(-12, 172, 424, 441.75)); // the bleed (28) is wider than the padding (16)
+  });
+
+  it("sideways with safe-area insets: reaches the screen's left edge and the home-indicator inset, and the blank cell beside a centred canvas", () => {
+    // 852×393, insets 59 left/right and 21 bottom; the "top" layout centres the canvas in its cell.
+    const view = box(0, 0, 852, 393);
+    const pad = box(59, 4, 59, 21);
+    const cell = box(59, 36, 727, 372);
+    const canvas = box(112, 36, 674, 352);
+    expect(strokeReach(canvas, cell, view, pad, 28)).toEqual(box(0, 8, 727, 393));
+  });
+
+  it("keeps at least the bleed on every side", () => {
+    const canvas = box(10, 10, 20, 20);
+    expect(strokeReach(canvas, box(5, 5, 25, 25), box(0, 0, 30, 30), noPad, 28)).toEqual(box(-18, -18, 48, 48));
+  });
+
+  it("is null for an empty (hidden) canvas", () => {
+    expect(strokeReach(box(0, 0, 0, 0), box(0, 0, 0, 0), box(0, 0, 100, 100), noPad, 28)).toBeNull();
+  });
+
+  it("pairs with inEdges and normalizePoint: a point in reach maps to the nearest canvas edge", () => {
+    const canvas = box(100, 50, 500, 350);
+    const reach = strokeReach(canvas, canvas, box(0, 0, 1000, 1000), noPad, 24);
+    expect(inEdges(90, 200, reach)).toBe(true);
+    expect(inEdges(75, 200, reach)).toBe(false);
+    expect(inEdges(300, 375, reach)).toBe(false);
+    expect(inEdges(0, 0, null)).toBe(false);
+    expect(normalizePoint(90, 200, { left: 100, top: 50, width: 400, height: 300 })).toEqual([0, 0.5]);
+  });
+});
+
+describe("marginStrokeBegins", () => {
+  const canvas = { left: 100, top: 50, right: 500, bottom: 350 };
+
+  it("waits while the finger stays put off the canvas (a tap there never inks)", () => {
+    expect(marginStrokeBegins([90, 200], 90, 200, canvas, 6)).toBe(false);
+    expect(marginStrokeBegins([90, 200], 93, 203, canvas, 6)).toBe(false);
+  });
+
+  it("begins once the finger moves the slop or comes onto the canvas", () => {
+    expect(marginStrokeBegins([80, 200], 86, 200, canvas, 6)).toBe(true);
+    expect(marginStrokeBegins([98, 200], 101, 200, canvas, 6)).toBe(true);
   });
 });
 

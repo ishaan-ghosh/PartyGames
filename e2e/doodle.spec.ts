@@ -324,6 +324,116 @@ test("phones-only: a sideways drawer's one-line feed strip always shows the newe
   await expect(feed.locator(".dd-feed-list > :last-child")).toHaveText("Guest: zork16");
 });
 
+/**
+ * A finger drag from `from` to `to`. Chromium: real touch input (CDP), so touch-action, panning and
+ * pointercancel all apply. WebKit has no touch-drag input in Playwright, so there it is a mouse drag:
+ * the same pointer events, hit-testing and capture, but not iOS's touch scrolling.
+ */
+async function fingerDrag(page: Page, browserName: string, from: [number, number], to: [number, number], steps = 15) {
+  const at = (i: number): [number, number] => [from[0] + ((to[0] - from[0]) * i) / steps, from[1] + ((to[1] - from[1]) * i) / steps];
+  if (browserName === "chromium") {
+    const cdp = await page.context().newCDPSession(page);
+    await cdp.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [{ x: from[0], y: from[1] }] });
+    for (let i = 1; i <= steps; i++) {
+      const [x, y] = at(i);
+      await cdp.send("Input.dispatchTouchEvent", { type: "touchMove", touchPoints: [{ x, y }] });
+    }
+    await cdp.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
+    await cdp.detach();
+  } else {
+    await page.mouse.move(...from);
+    await page.mouse.down();
+    for (let i = 1; i <= steps; i++) await page.mouse.move(...at(i));
+    await page.mouse.up();
+  }
+}
+
+/** Waits for three animation frames: CanvasView paints strokes on the next one. */
+const frames = (page: Page) =>
+  page.evaluate(() => new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(() => requestAnimationFrame(done)))));
+
+// A line drawn edge to edge usually starts with the finger off the canvas: the stroke still starts
+// (clamped to the edge) and the page doesn't scroll. Upright, sideways, and sideways on notched
+// iPhones, whose safe-area padding (`pad`, as iOS would set it; Playwright has no insets) puts the
+// screen edge far from the canvas: 852×393 ("top", canvas centred in its cell) and 844×390 ("rail").
+const offCanvasCases: { name: string; viewport?: { width: number; height: number }; pad?: string; side?: string }[] = [
+  { name: "upright" },
+  { name: "667×375", viewport: { width: 667, height: 375 } },
+  { name: "852×393, 59px insets", viewport: { width: 852, height: 393 }, pad: "4px 59px 21px 59px", side: "top" },
+  { name: "844×390, 47px insets", viewport: { width: 844, height: 390 }, pad: "4px 47px 21px 47px", side: "rail" },
+];
+for (const c of offCanvasCases) {
+  test(`phones-only: a stroke started off the canvas draws edge to edge (${c.name})`, async ({ browser, browserName }) => {
+    const phone = browserName === "webkit" ? devices["iPhone 13"] : devices["Pixel 7"];
+    const host = await (await browser.newContext({ ...phone, ...(c.viewport ? { viewport: c.viewport } : {}) })).newPage();
+    await host.goto("/");
+    await host.getByTestId("host-phone").click();
+    await host.getByTestId("name-input").fill("Host");
+    await host.getByTestId("join-submit").click();
+    await expect(host.getByTestId("phone-lobby")).toBeVisible();
+    const code = new URL(host.url()).pathname.split("/").pop()!;
+    const guest = await joinPhone(browser, code, "Guest");
+    await host.getByTestId("start-game").click();
+    await host.getByTestId("word-choice").first().click();
+    await expect(host.getByTestId("secret-word")).toBeVisible();
+    if (c.pad) await host.addStyleTag({ content: `.dd-phone.dd-phone-draw { padding: ${c.pad} !important; }` });
+    if (c.side) await expect(host.locator(".dd-phone-draw")).toHaveAttribute("data-side", c.side);
+
+    const canvas = host.getByTestId("draw-canvas");
+    const box = (await canvas.boundingBox())!;
+    if (c.pad) expect(box.x).toBeGreaterThan(40); // the inset is wider than the 28px bleed
+
+    // A tap off the canvas on the word (the strip above it, in "top") leaves no dot on the edge.
+    if (c.side === "top") {
+      const word: [number, number] = [box.x + 40, box.y - 10];
+      expect(await host.evaluate(([x, y]) => document.elementFromPoint(x, y)?.closest(".dd-secret") !== null, word)).toBe(true);
+      await fingerDrag(host, browserName, word, word, 1);
+      await frames(host);
+      expect(await inkedPixels(host, "draw-canvas")).toBe(0);
+    }
+
+    const y = box.y + box.height / 2;
+    // From the screen edge with insets; otherwise 10px off each side (or the page padding's edge).
+    const from: [number, number] = [c.pad ? 3 : Math.max(1, box.x - 10), y];
+    const to: [number, number] = [box.x + box.width + 10, y];
+    expect(from[0]).toBeLessThan(box.x);
+    // Where the finger lands is outside the canvas, and can't pan or zoom the page (iOS Safari
+    // takes touch-action from the element the touch starts on).
+    const start = await host.evaluate(([x, y]) => {
+      const el = document.elementFromPoint(x, y)!;
+      return { canvas: el.matches("canvas"), touchAction: getComputedStyle(el).touchAction };
+    }, from);
+    expect(start).toEqual({ canvas: false, touchAction: "none" });
+    const scroll = () => host.evaluate(() => [window.scrollX, window.scrollY, window.visualViewport?.pageTop ?? 0]);
+    const scrollBefore = await scroll();
+
+    await fingerDrag(host, browserName, from, to);
+    // Edge to edge on the 960×540 bitmap, at mid-height, give or take the brush. (Polled: CanvasView
+    // paints the last points on a later animation frame.)
+    await expect
+      .poll(async () => {
+        const ink = await inkBounds(host, "draw-canvas");
+        return ink.minX <= 6 && ink.maxX >= 954 && Math.abs((ink.minY + ink.maxY) / 2 - 270) <= 6;
+      }, { timeout: 5000, message: "a mid-height line from edge to edge on the drawer's canvas" })
+      .toBe(true);
+    expect(await scroll()).toEqual(scrollBefore);
+    await expect.poll(async () => (await inkBounds(guest, "phone-canvas")).maxX, { timeout: 5000 }).toBeGreaterThanOrEqual(954);
+
+    if (c.viewport) return;
+    // Upright: the fill tool ignores a tap just off the canvas (it wouldn't know what to fill)...
+    await host.getByRole("button", { name: /^Fill/ }).click();
+    const inked = await inkedPixels(host, "draw-canvas");
+    const off: [number, number] = [Math.max(1, box.x - 8), box.y + box.height * 0.25];
+    await fingerDrag(host, browserName, off, off, 1);
+    await frames(host);
+    expect(await inkedPixels(host, "draw-canvas")).toBe(inked);
+    // ...but fills from a tap on the canvas: the top half, above the line.
+    const on: [number, number] = [box.x + box.width / 2, box.y + box.height * 0.25];
+    await fingerDrag(host, browserName, on, on, 1);
+    await expect.poll(() => inkedPixels(host, "draw-canvas")).toBeGreaterThan(inked + 100_000);
+  });
+}
+
 test("the host kicks players from the lobby and during a game", async ({ browser }) => {
   const screen = await (await browser.newContext({ viewport: { width: 1280, height: 720 } })).newPage();
   await screen.goto("/");
