@@ -4,6 +4,7 @@ import type { DoodleAction, DoodleView } from "../rules";
 import { CanvasView } from "./CanvasView";
 import { DrawPad } from "./DrawPad";
 import { useFitWord } from "./fitWord";
+import { guessSendOptions } from "./guessSend";
 import { Feed, GuessForm, Hint, PhaseTimer, Reveal, Waiting } from "./parts";
 import { drawerSeesFeed } from "./phase";
 import { useDoodleSounds } from "./useDoodleSounds";
@@ -11,7 +12,7 @@ import { useStrokes } from "./useStrokes";
 
 export function DoodlePhone(p: GameClientProps<DoodleView>) {
   const { view, serverNow, mode, onEvent } = p;
-  const send = (a: DoodleAction) => p.send(a);
+  const send = (a: DoodleAction) => p.send(a, a.t === "guess" ? guessSendOptions(view) : undefined);
   const role = view.you?.role ?? "spectator";
   const isDrawer = role === "drawer";
   const [strokes, setStrokes, activity] = useStrokes(view, onEvent, isDrawer && view.phase === "drawing");
