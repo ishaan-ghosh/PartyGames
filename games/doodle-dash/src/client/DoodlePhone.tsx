@@ -1,7 +1,9 @@
 import { Button, type GameClientProps } from "@party/ui";
+import { useRef } from "react";
 import type { DoodleAction, DoodleView } from "../rules";
 import { CanvasView } from "./CanvasView";
 import { DrawPad } from "./DrawPad";
+import { useFitWord } from "./fitWord";
 import { Feed, GuessForm, Hint, PhaseTimer, Reveal, Waiting } from "./parts";
 import { drawerSeesFeed } from "./phase";
 import { useDoodleSounds } from "./useDoodleSounds";
@@ -18,6 +20,8 @@ export function DoodlePhone(p: GameClientProps<DoodleView>) {
   const drawer = view.players.find((x) => x.id === view.drawerId);
   const showCanvas = mode === "phones";
   const waiting = view.waiting === true;
+  const secretRef = useRef<HTMLParagraphElement>(null);
+  useFitWord(secretRef, isDrawer && view.phase === "drawing" ? `${view.turnKey}|${view.word ?? ""}` : null);
 
   const header = (
     <header className="dd-phone-top">
@@ -59,7 +63,7 @@ export function DoodlePhone(p: GameClientProps<DoodleView>) {
     return (
       <div className={`phone dd-phone dd-phone-draw${withFeed ? " dd-phone-draw-feed" : ""}`}>
         {header}
-        <p className="dd-secret">Draw: <strong data-testid="secret-word">{view.word}</strong></p>
+        <p className="dd-secret" ref={secretRef}><span className="dd-secret-label">Draw: </span><strong data-testid="secret-word">{view.word}</strong></p>
         {withFeed && <Feed items={view.feed} players={view.players} compact />}
         <DrawPad strokes={strokes} setStrokes={setStrokes} send={send} activity={activity} fillsLeft={view.fillsLeft} />
       </div>
