@@ -1,6 +1,7 @@
 import { Button, TimerRing } from "@party/ui";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { DoodleView, ViewFeedItem } from "../rules";
+import { hasNewItems, isNearBottom } from "./feedScroll";
 import { timerFor } from "./phase";
 
 export function Hint({ hint, big = false }: { hint: string | null; big?: boolean }) {
@@ -44,31 +45,72 @@ export function Waiting({ view, overlay = false }: { view: DoodleView; overlay?:
   );
 }
 
-export function Feed({ items, players, compact = false }: { items: ViewFeedItem[]; players: DoodleView["players"]; compact?: boolean }) {
+/**
+ * The guess feed. It sticks to the bottom: new items and resizes keep the newest item in view only
+ * while the reader is at the bottom; once they scroll up, their position is kept and a "New
+ * messages" pill offers a jump back. `alwaysFollow` (the TV, which nobody scrolls) always follows.
+ */
+export function Feed({ items, players, compact = false, alwaysFollow = false }: {
+  items: ViewFeedItem[];
+  players: DoodleView["players"];
+  compact?: boolean;
+  alwaysFollow?: boolean;
+}) {
   const ref = useRef<HTMLDivElement>(null);
-  useEffect(() => {
+  // Whether the reader was at the bottom as of the last scroll; measured before content changes,
+  // so it says where they were, not where the new content leaves them.
+  const atBottom = useRef(true);
+  const lastSeenId = useRef<number | null>(null);
+  const [unseen, setUnseen] = useState(false);
+
+  const toBottom = useCallback(() => {
     const el = ref.current;
-    if (el) el.scrollTop = el.scrollHeight;
-  }, [items]);
-  // Keep the newest item in view when the feed is resized (e.g. the phone is rotated).
+    if (!el) return;
+    el.scrollTop = el.scrollHeight;
+    // The resulting scroll event lands at the bottom too, so it can't mark the reader as scrolled up.
+    atBottom.current = true;
+    setUnseen(false);
+  }, []);
+
+  useLayoutEffect(() => {
+    const fresh = hasNewItems(lastSeenId.current, items);
+    lastSeenId.current = items.length ? items[items.length - 1]!.id : null;
+    if (alwaysFollow || atBottom.current) toBottom();
+    else if (fresh) setUnseen(true);
+  }, [items, alwaysFollow, toBottom]);
+
+  // Keep the newest item in view when the feed is resized (e.g. the phone is rotated), if following.
   useEffect(() => {
     const el = ref.current;
     if (!el || typeof ResizeObserver === "undefined") return;
     const ro = new ResizeObserver(() => {
-      el.scrollTop = el.scrollHeight;
+      if (alwaysFollow || atBottom.current) toBottom();
     });
     ro.observe(el);
     return () => ro.disconnect();
-  }, []);
+  }, [alwaysFollow, toBottom]);
+
+  const onScroll = () => {
+    const el = ref.current;
+    if (!el) return;
+    atBottom.current = isNearBottom(el);
+    if (atBottom.current) setUnseen(false);
+  };
+
   const nameOf = (id: string | null) => players.find((p) => p.id === id)?.name ?? "";
   return (
-    <div ref={ref} className={`dd-feed ${compact ? "dd-feed-compact" : ""}`} aria-live="polite">
+    <div ref={ref} className={`dd-feed ${compact ? "dd-feed-compact" : ""}`} aria-live="polite" onScroll={onScroll}>
       {items.map((f) => (
         <p key={f.id} className={`dd-feed-item dd-feed-${f.kind}`}>
           {f.kind === "chat" && <b>{nameOf(f.playerId)}: </b>}
           {f.text}
         </p>
       ))}
+      {unseen && (
+        <button type="button" className="dd-feed-jump" data-testid="feed-jump" onClick={toBottom}>
+          New messages <span aria-hidden>↓</span>
+        </button>
+      )}
     </div>
   );
 }

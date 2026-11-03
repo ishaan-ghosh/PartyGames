@@ -45,6 +45,14 @@
 .dd-feed-correct { color: var(--good); font-weight: 700; }
 .dd-feed-close { color: var(--warn); font-weight: 600; }
 .dd-feed-system { color: var(--text-dim); font-style: italic; }
+/* Shown while scrolled up and new items arrive: sticks to the feed's bottom edge, jumps to the newest. */
+.dd-feed-jump {
+  position: sticky; bottom: 0; align-self: center; flex: none;
+  margin-top: auto; padding: 4px 12px; min-height: 28px;
+  font: 600 0.85rem var(--font-body); color: var(--bg-sunken); background: var(--game-accent);
+  border: 0; border-radius: 999px; box-shadow: 0 2px 8px rgb(0 0 0 / 0.4); cursor: pointer;
+}
+.dd-feed-jump:focus-visible { outline: 2px solid var(--text); outline-offset: 2px; }
 /*
  * TV readability: the screen's feed and scoreboard are read from a couch ~3 m away, so their text
  * scales with the viewport (mostly its height: 16:9 screens are height-limited). Roughly 28px feed
