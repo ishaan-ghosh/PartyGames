@@ -6,6 +6,8 @@ export const LIMITS = {
   nameMax: 16,
   hostGraceMs: 15_000,
   emptyRoomTtlMs: 10 * 60_000,
+  /** Lobby caps only evict members disconnected at least this long, so a phone that just slept keeps its seat. */
+  evictGraceMs: 45_000,
 } as const;
 
 export const Avatar = z.object({
@@ -34,6 +36,8 @@ export const ClientMsg = z.discriminatedUnion("type", [
   }),
   z.object({ type: z.literal("action"), payload: z.unknown() }),
   z.object({ type: z.literal("host"), cmd: HostCmd }),
+  /** Asks for the game's full-picture event again (see GameModule.sync), e.g. after a missed event. */
+  z.object({ type: z.literal("resync") }),
 ]);
 export type ClientMessage = z.infer<typeof ClientMsg>;
 export type HelloMessage = Extract<ClientMessage, { type: "hello" }>;

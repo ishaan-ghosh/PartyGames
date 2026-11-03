@@ -1,6 +1,19 @@
 import type { ActionResult } from "@party/shared";
 import { INK_LIMIT, MAX_FILLS, STROKE_COST, type DoodleState, type Stroke, type StrokeAction, type StrokeOp } from "./types";
 
+/** Cheap shape signature, "count:numbers" (a fill counts 2). Views carry it so clients can spot a wrong list. */
+export function strokeSignature(strokes: readonly Stroke[]): string {
+  let points = 0;
+  for (const s of strokes) points += s.tool === "fill" ? 2 : s.points.length;
+  return `${strokes.length}:${points}`;
+}
+export const EMPTY_SIG = "0:0";
+
+/** The whole drawing as one "sync" op (copied: live strokes keep growing after it is queued). */
+export function syncOp(s: DoodleState): StrokeOp {
+  return { op: "sync", seq: s.opSeq, strokes: s.strokes.map((st) => (st.tool === "fill" ? { ...st } : { ...st, points: [...st.points] })) };
+}
+
 /** Applies a drawer's stroke action. Always quiet; accepted actions carry one op event for the others. */
 export function handleStroke(s: DoodleState, playerId: string, action: StrokeAction): ActionResult<DoodleState> {
   const ignore: ActionResult<DoodleState> = { state: s, quiet: true };

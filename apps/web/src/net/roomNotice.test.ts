@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { RoomSnapshot } from "@party/shared";
-import { NOTICE_TEXT, observeRoom, type NoticeBaseline, type NoticeInput, type RoomNoticeKind } from "./roomNotice";
+import { NOTICE_TEXT, noticeText, observeRoom, type NoticeBaseline, type NoticeInput, type RoomNoticeKind } from "./roomNotice";
 
 const snap = (over: Partial<RoomSnapshot> = {}): RoomSnapshot => ({
   code: "ABCD", hostId: "s1", mode: "screen", phase: "playing", gameId: "doodle-dash", settings: {},
@@ -94,6 +94,53 @@ describe("observeRoom", () => {
       input({ session: 2, room: snap({ mode: "phones" }) }),
       input({ session: 2, room: snap({ mode: "screen" }) }),
     )).toEqual([null, null, null, "tv-back"]);
+  });
+
+  it("raises host-tv when the TV reclaims host from you mid-game", () => {
+    const screens = [{ id: "s1", connected: true, isHost: false }];
+    expect(run(
+      input({ room: snap({ mode: "phones", hostId: "p1", screens }) }),
+      input({ room: snap({ mode: "phones", hostId: "s1", screens }) }),
+    )).toEqual([null, "host-tv"]);
+  });
+
+  it("prefers host-tv over tv-back when the TV returns and reclaims host in one snapshot", () => {
+    const screens = [{ id: "s1", connected: true, isHost: true }];
+    expect(run(
+      input({ room: snap({ mode: "phones", hostId: "p1", screens: [] }) }),
+      input({ room: snap({ mode: "screen", hostId: "s1", screens }) }),
+    )).toEqual([null, "host-tv"]);
+    // Every other phone sees the plain reconnect.
+    expect(run(
+      input({ youId: "p2", room: snap({ mode: "phones", hostId: "p1", screens: [] }) }),
+      input({ youId: "p2", room: snap({ mode: "screen", hostId: "s1", screens }) }),
+    )).toEqual([null, "tv-back"]);
+  });
+
+  it("raises host-player when another player takes host from you mid-game", () => {
+    expect(run(
+      input({ room: snap({ mode: "phones", hostId: "p1" }) }),
+      input({ room: snap({ mode: "phones", hostId: "p2" }) }),
+    )).toEqual([null, "host-player"]);
+  });
+
+  it("raises nothing for losing host outside a game or across a reconnect", () => {
+    const screens = [{ id: "s1", connected: true, isHost: true }];
+    expect(run(
+      input({ room: snap({ phase: "lobby", hostId: "p1" }) }),
+      input({ room: snap({ phase: "lobby", hostId: "s1", screens }) }),
+    )).toEqual([null, null]);
+    expect(run(
+      input({ room: snap({ mode: "phones", hostId: "p1" }) }),
+      input({ session: 2, room: snap({ hostId: "s1", screens }) }),
+    )).toEqual([null, null]);
+  });
+
+  it("names the new host in host-player text, and falls back when unknown", () => {
+    const players = [{ id: "p2", name: "Bea", avatar: { emoji: "🐙", color: "#ff0000" }, connected: true, isHost: true }];
+    expect(noticeText("host-player", snap({ hostId: "p2", players }))).toBe("Bea is the host now");
+    expect(noticeText("host-player", snap({ hostId: "p9", players }))).toBe("You're no longer the host");
+    expect(noticeText("host-tv", snap())).toBe(NOTICE_TEXT["host-tv"]);
   });
 
   it("raises nothing without a room or identity", () => {

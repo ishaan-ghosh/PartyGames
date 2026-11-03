@@ -4,6 +4,7 @@ import type { DoodleAction, DoodleView } from "../rules";
 import { CanvasView, canvasVars } from "./CanvasView";
 import { DrawPad } from "./DrawPad";
 import { useFitWord } from "./fitWord";
+import { guessSendOptions } from "./guessSend";
 import { Feed, GuessForm, Hint, PhaseTimer, Reveal, Waiting } from "./parts";
 import { drawerSeesFeed } from "./phase";
 import { useSidewaysLayout } from "./sideways";
@@ -12,10 +13,10 @@ import { useStrokes } from "./useStrokes";
 
 export function DoodlePhone(p: GameClientProps<DoodleView>) {
   const { view, serverNow, mode, onEvent } = p;
-  const send = (a: DoodleAction) => p.send(a);
+  const send = (a: DoodleAction) => p.send(a, a.t === "guess" ? guessSendOptions(view) : undefined);
   const role = view.you?.role ?? "spectator";
   const isDrawer = role === "drawer";
-  const [strokes, setStrokes, activity] = useStrokes(view, onEvent, isDrawer && view.phase === "drawing");
+  const [strokes, setStrokes, activity] = useStrokes(view, onEvent, isDrawer && view.phase === "drawing", p.resync);
   useDoodleSounds(view, p.soundOn, serverNow);
   const me = view.players.find((x) => x.id === p.you.id);
   const drawer = view.players.find((x) => x.id === view.drawerId);
@@ -68,7 +69,7 @@ export function DoodlePhone(p: GameClientProps<DoodleView>) {
       <div ref={drawRef} className={`phone dd-phone dd-phone-draw${withFeed ? " dd-phone-draw-feed" : ""}`} style={canvasVars}>
         {header}
         <p className="dd-secret" ref={secretRef}><span className="dd-secret-label">Draw: </span><strong data-testid="secret-word">{view.word}</strong></p>
-        {withFeed && <Feed items={view.feed} players={view.players} compact />}
+        {withFeed && <Feed items={view.feed} players={view.players} compact youId={p.you.id} />}
         <DrawPad strokes={strokes} setStrokes={setStrokes} send={send} activity={activity} fillsLeft={view.fillsLeft} />
       </div>
     );
@@ -91,7 +92,7 @@ export function DoodlePhone(p: GameClientProps<DoodleView>) {
       )}
       {view.phase === "drawing" && <Hint hint={view.hint} />}
       {solved && view.phase === "drawing" && <div className="dd-solved">✅ You got it! +{me?.turnPoints ?? 0}</div>}
-      <Feed items={view.feed} players={view.players} compact />
+      <Feed items={view.feed} players={view.players} compact youId={p.you.id} />
       {!isDrawer && <GuessForm placeholder={solved ? "Chat with players who got it" : "Type your guess"} onSubmit={(text) => send({ t: "guess", text })} />}
     </div>
   );

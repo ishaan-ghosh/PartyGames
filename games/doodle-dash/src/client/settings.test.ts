@@ -1,5 +1,13 @@
 import { describe, expect, it } from "vitest";
-import { editStateWhen, splitWords, syncWordsText } from "./settings";
+import { defaultSettings } from "../rules/settings";
+import { editStateWhen, splitWords, syncWordsText, wordsHidden } from "./settings";
+
+describe("wordsHidden", () => {
+  it("is true for the count-only settings a TV host receives", () => {
+    expect(wordsHidden({ rounds: 3, drawTime: 80, difficulty: "mixed", customWordCount: 2 })).toBe(true);
+    expect(wordsHidden({ ...defaultSettings, customWords: ["kite"] })).toBe(false);
+  });
+});
 
 describe("splitWords", () => {
   it("splits on commas and drops blanks", () => {

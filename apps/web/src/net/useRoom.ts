@@ -2,14 +2,15 @@ import type { Avatar, HostCommand, ServerMsg } from "@party/shared";
 import PartySocket from "partysocket";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { storage } from "../lib/storage";
-import { Outbox } from "./outbox";
+import { Outbox, type LooseSend } from "./outbox";
 import { FATAL_ERRORS, forgetOnFatalError, initialRoomState, reduceServerMsg, type ClientRoomState } from "./roomState";
 
 export interface HelloInfo { role: "screen" | "player"; name?: string; avatar?: Avatar }
 export interface RoomConnection extends ClientRoomState {
-  sendAction(payload: unknown): void;
+  sendAction(payload: unknown, opts?: LooseSend): void;
   sendHost(cmd: HostCommand): void;
   onEvent(cb: (payload: unknown) => void): () => void;
+  resync(): void;
   serverNow(): number;
 }
 
@@ -76,6 +77,10 @@ export function useRoom(code: string, hello: HelloInfo | null): RoomConnection {
       }
       setState((s) => reduceServerMsg(s, msg, Date.now()));
       if (msg.type === "welcome") outbox.welcome();
+      // After a welcome the server sends the room, then (if a game is running) our view: queued loose
+      // actions (guesses) are checked against that view before they're sent.
+      if (msg.type === "room" && msg.room.phase !== "playing") outbox.synced(null);
+      if (msg.type === "view") outbox.synced(msg.payload);
     };
     ws.addEventListener("open", onOpen);
     ws.addEventListener("close", onClose);
@@ -94,13 +99,17 @@ export function useRoom(code: string, hello: HelloInfo | null): RoomConnection {
 
   // Both sends are silently dropped when there's no outbox (before the effect runs / after unmount).
   // Callers must only send once `you` is set; the UI renders nothing that sends before that.
-  // Actions survive a short reconnect (Outbox TTL); host commands are never queued and are dropped
+  // Actions survive a short reconnect (Outbox TTL; loose ones like guesses longer, if still valid); host commands are never queued and are dropped
   // unless the connection is welcomed, so a stale skip/kick/start can't hit the wrong turn.
-  const sendAction = useCallback((payload: unknown) => {
-    outboxRef.current?.send(JSON.stringify({ type: "action", payload }));
+  const sendAction = useCallback((payload: unknown, opts?: LooseSend) => {
+    outboxRef.current?.send(JSON.stringify({ type: "action", payload }), opts);
   }, []);
   const sendHost = useCallback((cmd: HostCommand) => {
     outboxRef.current?.sendNow(JSON.stringify({ type: "host", cmd }));
+  }, []);
+  // Not queued: a resync from before a reconnect is moot, since the room re-sends sync events on hello.
+  const resync = useCallback(() => {
+    outboxRef.current?.sendNow(JSON.stringify({ type: "resync" }));
   }, []);
   const onEvent = useCallback((cb: (payload: unknown) => void) => {
     listeners.current.add(cb);
@@ -110,5 +119,5 @@ export function useRoom(code: string, hello: HelloInfo | null): RoomConnection {
   }, []);
   const serverNow = useCallback(() => Date.now() + offset.current, []);
 
-  return { ...state, sendAction, sendHost, onEvent, serverNow };
+  return { ...state, sendAction, sendHost, resync, onEvent, serverNow };
 }

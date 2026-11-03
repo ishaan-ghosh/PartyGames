@@ -16,7 +16,7 @@ const base: DoodleView = {
   choices: null,
   you: null,
   feed: [],
-  strokes: [],
+  strokeSig: "0:0",
   opSeq: 0,
 };
 

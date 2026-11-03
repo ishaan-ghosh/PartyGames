@@ -1,9 +1,9 @@
 import type { HostCommand, RoomSnapshot, You } from "@party/shared";
 import { Button, PlayerChip } from "@party/ui";
 import { QRCodeSVG } from "qrcode.react";
-import { Fragment, useState } from "react";
+import { Fragment, useEffect, useRef, useState } from "react";
 import { getClientGame } from "../games";
-import { kickablePlayers, pendingKick } from "../kick/kick";
+import { focusAfterKick, kickablePlayers, pendingKick } from "../kick/kick";
 import { KickChipButton, KickConfirmDialog } from "../kick/KickDialogs";
 import { publicOrigin } from "../lib/origin";
 import { HostPanel } from "./HostPanel";
@@ -25,8 +25,21 @@ export function PhoneLobby({ room, you, isHost, online, sendHost }: {
   const { target: kickTarget, stale: staleKick } = pendingKick(kickable, kickId);
   // The target left or we stopped being host: drop the pending confirm so it can't come back later.
   if (staleKick) setKickId(null);
+  // After a kick, focus moves off the soon-gone chip: to the next chip, else the previous, else the
+  // host panel (Start if it's enabled). A fresh object per kick, so the effect runs every time.
+  const chipRefs = useRef(new Map<string, HTMLButtonElement>());
+  const rootRef = useRef<HTMLDivElement>(null);
+  const [refocus, setRefocus] = useState<{ id: string | null } | null>(null);
+  useEffect(() => {
+    if (!refocus) return;
+    const root = rootRef.current;
+    const el = (refocus.id ? chipRefs.current.get(refocus.id) : undefined)
+      ?? root?.querySelector<HTMLElement>('[data-testid="start-game"]:not(:disabled)')
+      ?? root?.querySelector<HTMLElement>(".host-panel button:not(:disabled)");
+    el?.focus();
+  }, [refocus]);
   return (
-    <div className="phone phone-lobby" data-testid="phone-lobby">
+    <div className="phone phone-lobby" data-testid="phone-lobby" ref={rootRef}>
       <header className="phone-header">
         <span className="eyebrow">Room</span>
         <strong className="room-code-sm">{room.code}</strong>
@@ -69,7 +82,16 @@ export function PhoneLobby({ room, you, isHost, online, sendHost }: {
           return (
             <Fragment key={p.id}>
               {kickable.some((k) => k.id === p.id) ? (
-                <KickChipButton player={p} onClick={() => setKickId(p.id)}>{chip}</KickChipButton>
+                <KickChipButton
+                  player={p}
+                  onClick={() => setKickId(p.id)}
+                  buttonRef={(el) => {
+                    if (el) chipRefs.current.set(p.id, el);
+                    else chipRefs.current.delete(p.id);
+                  }}
+                >
+                  {chip}
+                </KickChipButton>
               ) : (
                 chip
               )}
@@ -83,7 +105,10 @@ export function PhoneLobby({ room, you, isHost, online, sendHost }: {
         <KickConfirmDialog
           player={kickTarget}
           online={online}
-          onKick={(playerId) => sendHost({ cmd: "kick", playerId })}
+          onKick={(playerId) => {
+            sendHost({ cmd: "kick", playerId });
+            setRefocus({ id: focusAfterKick(kickable.map((k) => k.id), playerId) });
+          }}
           onClose={() => setKickId(null)}
         />
       )}

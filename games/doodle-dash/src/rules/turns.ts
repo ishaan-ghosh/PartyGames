@@ -108,6 +108,7 @@ export function startTurn(s: DoodleState, now: number): DoodleState {
   s.solvers = [];
   s.turnPoints = {};
   s.strokes = [];
+  s.opSeq += 1; // the wipe is a new stroke version, so clients behind it can tell
   s.openStroke = null;
   s.ink = 0;
   s.fills = 0;

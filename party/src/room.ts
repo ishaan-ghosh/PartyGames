@@ -2,9 +2,12 @@ import { LIMITS, type ServerMsg } from "@party/shared";
 import { Server, type Connection, type WSMessage } from "partyserver";
 import type { Env } from "./env";
 import { DEFAULT_GAME_ID, games } from "./games";
+import { MessageLimiter, POLICY_CLOSE, RejectLog } from "./rate-limit";
 import { RoomCore, type SavedRoom } from "./room-core";
+import { ROOM_KEY, SavePlanner, getBatched, partKey } from "./save-plan";
 
-const KEY = "room";
+/** Durable Object storage takes at most 128 keys per get or put call. */
+const PUT_BATCH = 128;
 /** Largest client frame we will parse. A full 400-number stroke batch is about 8 KB of JSON. */
 export const MAX_FRAME_BYTES = 16 * 1024;
 
@@ -20,10 +23,20 @@ function frameBytes(message: WSMessage): number {
 export class Room extends Server<Env> {
   private core!: RoomCore;
   private scheduled: number | null = null;
+  private rejects?: RejectLog;
+  private readonly limiters = new Map<string, MessageLimiter>();
+
+  private get rejectLog(): RejectLog {
+    return (this.rejects ??= new RejectLog(this.name));
+  }
+  private readonly planner = new SavePlanner();
 
   async onStart() {
-    const saved = await this.ctx.storage.get<SavedRoom>(KEY);
-    this.core = this.makeCore(saved);
+    const saved = await this.ctx.storage.get<SavedRoom>(ROOM_KEY);
+    const names = saved?.parts ?? [];
+    const stored = await getBatched((keys) => this.ctx.storage.get(keys), names.map(partKey), PUT_BATCH);
+    this.planner.restored(names);
+    this.core = this.makeCore(saved, Object.fromEntries(names.map((n) => [n, stored.get(partKey(n))])));
     if (!saved) {
       // Never created (or already discarded). Drop anything partyserver wrote on init (its `__ps_name`
       // fallback record) so touching an unknown code leaves no storage behind. The name still comes
@@ -38,7 +51,7 @@ export class Room extends Server<Env> {
     await this.after(true);
   }
 
-  private makeCore(saved?: SavedRoom): RoomCore {
+  private makeCore(saved?: SavedRoom, parts?: Record<string, unknown>): RoomCore {
     return new RoomCore(
       this.name,
       {
@@ -50,8 +63,9 @@ export class Room extends Server<Env> {
       {
         send: (id, msg) => this.getConnection(id)?.send(JSON.stringify(msg)),
         close: (id) => this.getConnection(id)?.close(4000, "closed by room"),
+        reject: (r) => this.rejectLog.log(r, Date.now()),
       },
-      saved ? { saved, now: Date.now() } : undefined,
+      saved ? { saved, now: Date.now(), parts } : undefined,
     );
   }
 
@@ -66,7 +80,24 @@ export class Room extends Server<Env> {
   }
 
   onMessage(conn: Connection, message: WSMessage) {
+    const now = Date.now();
+    let limiter = this.limiters.get(conn.id);
+    if (!limiter) this.limiters.set(conn.id, (limiter = new MessageLimiter(now)));
+    const verdict = limiter.check(now);
+    if (verdict !== "ok") {
+      // Dropped silently: answering a flood would only amplify it.
+      this.rejectLog.log({ conn: conn.id, type: "?", reason: verdict === "close" ? "rate_abuse" : "rate_limited" }, now);
+      if (verdict === "close") {
+        try {
+          conn.close(POLICY_CLOSE, "too many messages");
+        } catch {
+          // Already closing: frames still in flight keep landing here until onClose.
+        }
+      }
+      return;
+    }
     if (frameBytes(message) > MAX_FRAME_BYTES) {
+      this.rejectLog.log({ conn: conn.id, type: "?", reason: "too_large" }, now);
       const err: ServerMsg = { type: "error", code: "BAD_MESSAGE", message: "Message too large." };
       conn.send(JSON.stringify(err));
       return;
@@ -79,15 +110,17 @@ export class Room extends Server<Env> {
         data = null;
       }
     }
-    const r = this.core.message(conn.id, data, Date.now());
+    const r = this.core.message(conn.id, data, now);
     void this.after(r.persist);
   }
 
   onClose(conn: Connection) {
+    this.limiters.delete(conn.id);
     void this.after(this.core.disconnect(conn.id, Date.now()).persist);
   }
 
   onError(conn: Connection) {
+    this.limiters.delete(conn.id);
     void this.after(this.core.disconnect(conn.id, Date.now()).persist);
   }
 
@@ -111,8 +144,25 @@ export class Room extends Server<Env> {
   private async discard() {
     await this.ctx.storage.deleteAlarm();
     await this.ctx.storage.deleteAll();
+    this.planner.reset();
     this.scheduled = null;
     this.core = this.makeCore();
+  }
+
+  /**
+   * Writes the room record plus only the game parts that changed (see SavePlanner). All calls are
+   * issued without an await between them, so storage coalesces them into one atomic write and
+   * overlapping saves stay in order.
+   */
+  private save(): Promise<unknown> {
+    const { put, del } = this.planner.plan(this.core.serializeSplit());
+    const entries = Object.entries(put);
+    const writes: Promise<unknown>[] = [];
+    for (let i = 0; i < entries.length; i += PUT_BATCH) {
+      writes.push(this.ctx.storage.put(Object.fromEntries(entries.slice(i, i + PUT_BATCH))));
+    }
+    for (let i = 0; i < del.length; i += PUT_BATCH) writes.push(this.ctx.storage.delete(del.slice(i, i + PUT_BATCH)));
+    return Promise.all(writes);
   }
 
   /**
@@ -122,7 +172,7 @@ export class Room extends Server<Env> {
    */
   private async after(persist: boolean) {
     if (!this.core.created) return;
-    if (persist) await this.ctx.storage.put(KEY, this.core.serialize());
+    if (persist) await this.save();
     const at = Math.min(this.core.nextAlarmAt() ?? Infinity, Date.now() + LIMITS.emptyRoomTtlMs);
     // An earlier alarm than needed is harmless (it ticks and re-arms), so only move it earlier. This
     // avoids an alarm write per message while the watchdog drifts forward.

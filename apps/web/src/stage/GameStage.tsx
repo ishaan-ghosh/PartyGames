@@ -51,6 +51,7 @@ export function GameStage({ r, isHost }: { r: RoomConnection; isHost: boolean })
     mode: room.mode,
     send: r.sendAction,
     onEvent: r.onEvent,
+    resync: r.resync,
     serverNow: r.serverNow,
     soundOn: you.kind === "screen" || room.mode === "phones",
   };

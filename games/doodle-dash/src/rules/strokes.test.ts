@@ -1,8 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { handleStroke } from "./strokes";
+import { doodleDash } from "./index";
+import { EMPTY_SIG, handleStroke, strokeSignature } from "./strokes";
 import { drawing, start } from "./testkit";
 import { onChoose, onSkip, onTimer } from "./turns";
-import { INK_LIMIT, MAX_FILLS, type StrokeAction } from "./types";
+import { INK_LIMIT, MAX_FILLS, type StrokeAction, type StrokeOp } from "./types";
 import { view } from "./view";
 
 describe("strokes", () => {
@@ -12,9 +13,9 @@ describe("strokes", () => {
     const r2 = handleStroke(s, "p1", { t: "strokeAppend", id: 1, points: [0.2, 0.2, 0.3, 0.3] });
     expect(r1.quiet).toBe(true);
     expect(r1.events).toEqual([
-      { to: "others", payload: { op: "begin", seq: 1, stroke: { id: 1, tool: "pen", color: 3, size: 1, points: [0.1, 0.1] } } },
+      { to: "others", payload: { op: "begin", seq: 2, stroke: { id: 1, tool: "pen", color: 3, size: 1, points: [0.1, 0.1] } } },
     ]);
-    expect(r2.events?.[0]?.payload).toEqual({ op: "append", seq: 2, strokeId: 1, points: [0.2, 0.2, 0.3, 0.3] });
+    expect(r2.events?.[0]?.payload).toEqual({ op: "append", seq: 3, strokeId: 1, points: [0.2, 0.2, 0.3, 0.3] });
     expect(s.strokes[0]).toMatchObject({ points: [0.1, 0.1, 0.2, 0.2, 0.3, 0.3] });
   });
 
@@ -31,7 +32,7 @@ describe("strokes", () => {
     handleStroke(s, "p1", { t: "strokeBegin", id: 1, tool: "pen", color: 0, size: 0, points: [0.5, 0.5] });
     handleStroke(s, "p1", { t: "fill", color: 4, x: 0.1, y: 0.1 });
     expect(s.strokes.map((x) => x.tool)).toEqual(["pen", "fill"]);
-    expect(handleStroke(s, "p1", { t: "undo" }).events?.[0]?.payload).toEqual({ op: "undo", seq: 3 });
+    expect(handleStroke(s, "p1", { t: "undo" }).events?.[0]?.payload).toEqual({ op: "undo", seq: 4 });
     expect(s.strokes).toHaveLength(1);
     handleStroke(s, "p1", { t: "clear" });
     expect(s.strokes).toEqual([]);
@@ -56,12 +57,37 @@ describe("strokes", () => {
     expect(s.ink).toBe(0);
   });
 
-  it("includes all strokes in every view so late joiners see the drawing", () => {
+  it("keeps strokes out of views: a view carries only the stroke version and shape", () => {
+    const s = drawing("banana");
+    const seq0 = s.opSeq;
+    handleStroke(s, "p1", { t: "strokeBegin", id: 1, tool: "pen", color: 0, size: 0, points: [0, 0, 0.5, 0.5] });
+    handleStroke(s, "p1", { t: "fill", color: 2, x: 0.5, y: 0.5 });
+    const v = view(s, { kind: "player", playerId: "late" });
+    expect(v).not.toHaveProperty("strokes");
+    expect(v.opSeq).toBe(seq0 + 2);
+    expect(v.strokeSig).toBe("2:6"); // 2 strokes, 4 pen numbers + 2 for the fill
+    expect(strokeSignature([])).toBe(EMPTY_SIG);
+  });
+
+  it("gives late joiners the whole drawing through the sync event, as a copy", () => {
     const s = drawing("banana");
     handleStroke(s, "p1", { t: "strokeBegin", id: 1, tool: "pen", color: 0, size: 0, points: [0, 0] });
-    const v = view(s, { kind: "player", playerId: "late" });
-    expect(v.strokes).toHaveLength(1);
-    expect(v.opSeq).toBe(1);
+    const op = doodleDash.sync!(s, { kind: "screen" }) as Extract<StrokeOp, { op: "sync" }>;
+    expect(op).toEqual({ op: "sync", seq: s.opSeq, strokes: s.strokes });
+    handleStroke(s, "p1", { t: "strokeAppend", id: 1, points: [1, 1] });
+    expect(op.strokes[0]).toMatchObject({ points: [0, 0] }); // not aliased to live state
+  });
+
+  it("bumps the stroke version when a new turn wipes the canvas", () => {
+    const s = drawing("banana", 3, { drawTime: 30 });
+    handleStroke(s, "p1", { t: "strokeBegin", id: 1, tool: "pen", color: 0, size: 0, points: [0, 0] });
+    const seq = s.opSeq;
+    onSkip(s, 1); // drawing → reveal keeps the drawing up
+    expect(s.opSeq).toBe(seq);
+    onTimer(s, s.phaseEndsAt); // reveal → next turn
+    expect(s.strokes).toEqual([]);
+    expect(s.opSeq).toBe(seq + 1);
+    expect(view(s, { kind: "screen" }).strokeSig).toBe(EMPTY_SIG);
   });
 });
 
@@ -138,7 +164,7 @@ describe("strokeAppend targets its stroke by the drawer's stroke id", () => {
   it("appends to the stroke begun with the same id; the op carries the server stroke id", () => {
     const s = drawing("banana");
     handleStroke(s, "p1", begin(7));
-    expect(handleStroke(s, "p1", append(7)).events?.[0]?.payload).toEqual({ op: "append", seq: 2, strokeId: 1, points: [0.2, 0.2] });
+    expect(handleStroke(s, "p1", append(7)).events?.[0]?.payload).toEqual({ op: "append", seq: 3, strokeId: 1, points: [0.2, 0.2] });
   });
 
   it("refuses appends whose begin was lost instead of extending the previous stroke", () => {

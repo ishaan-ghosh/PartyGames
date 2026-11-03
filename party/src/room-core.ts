@@ -9,13 +9,17 @@ import {
   type HostCommand,
   type PlayerInfo,
   type RoomSnapshot,
+  type SavePart,
   type ServerMsg,
   type Viewer,
 } from "@party/shared";
+import { label, type Rejection } from "./rate-limit";
 
 export interface Outbox {
   send(connId: string, msg: ServerMsg): void;
   close(connId: string): void;
+  /** A client message was refused (spec §5: invalid actions are logged). Carries no message bodies. */
+  reject?(r: Rejection): void;
 }
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export type AnyGame = GameModule<any, any, any>;
@@ -55,11 +59,15 @@ export interface SavedRoom {
   seated: string[];
   lastResults: GameResult[] | null;
   emptySince: number | null;
+  /** Names of game-state parts stored under their own keys (see GameModule.splitSave). */
+  parts?: string[];
 }
 
 export interface Handled { persist: boolean }
 const YES: Handled = { persist: true };
 const NO: Handled = { persist: false };
+/** At most one answered `resync` per member per this long. Clients retry less often than this. */
+export const RESYNC_MIN_MS = 1000;
 const DEFAULT_AVATAR: Avatar = { emoji: "🙂", color: "#7f5af0" };
 const CONTROL_OR_FORMAT = /[\p{Cc}\p{Cf}]/gu;
 /** Control/format characters except ZWJ (U+200D) and VS16 (U+FE0F), which emoji sequences need. */
@@ -79,18 +87,26 @@ function cleanAvatar(avatar: Avatar | undefined): Avatar {
   return { emoji: ok ? emoji : DEFAULT_AVATAR.emoji, color: avatar.color };
 }
 
+function viewerOf(m: Member): Viewer {
+  return m.kind === "screen" ? { kind: "screen" } : { kind: "player", playerId: m.id };
+}
+
 /** All room behavior, free of Cloudflare APIs. The Durable Object adapter feeds it messages and time. */
 export class RoomCore {
   private s: SavedRoom;
+  /** Last answered `resync` per member id (in memory only). */
+  private readonly lastResync = new Map<string, number>();
 
   constructor(
     code: string,
     private readonly deps: CoreDeps,
     private readonly out: Outbox,
-    restore?: { saved: SavedRoom; now: number },
+    restore?: { saved: SavedRoom; now: number; parts?: Record<string, unknown> },
   ) {
     if (restore) {
       this.s = structuredClone(restore.saved);
+      const partNames = this.s.parts;
+      delete this.s.parts;
       for (const m of this.s.members) {
         // Older saves lack disconnectedAt; anyone connected at save time dropped "now".
         if (m.connId !== null || typeof m.disconnectedAt !== "number") m.disconnectedAt = restore.now;
@@ -112,6 +128,10 @@ export class RoomCore {
         this.s.seated = this.s.phase === "playing" ? this.s.members.filter((m) => m.kind === "player").map((m) => m.id) : [];
       }
       this.s.emptySince ??= restore.now;
+      if (this.s.phase === "playing" && partNames?.length && this.game.joinSave) {
+        const parts = Object.fromEntries(partNames.map((n) => [n, restore.parts?.[n]]));
+        this.s.gameState = this.game.joinSave(this.s.gameState, parts);
+      }
       if (this.s.phase === "playing") {
         for (const m of this.s.members) {
           if (m.kind === "player") this.s.gameState = this.game.onPresence(this.s.gameState, m.id, false, restore.now);
@@ -144,9 +164,18 @@ export class RoomCore {
     return structuredClone(this.s);
   }
 
+  /** Like serialize, with the game's bulky parts split out to be stored under their own keys. */
+  serializeSplit(): { saved: SavedRoom; parts: Record<string, SavePart> } {
+    if (this.s.phase !== "playing" || !this.game.splitSave) return { saved: this.serialize(), parts: {} };
+    const { state, parts } = this.game.splitSave(this.s.gameState);
+    const saved = structuredClone({ ...this.s, gameState: state, parts: Object.keys(parts) });
+    return { saved, parts };
+  }
+
   message(connId: string, raw: unknown, now: number): Handled {
     const parsed = ClientMsg.safeParse(raw);
     if (!parsed.success) {
+      this.out.reject?.({ conn: connId, type: label((raw as { type?: unknown } | null)?.type), reason: "bad_message" });
       this.error(connId, "BAD_MESSAGE", "Unrecognized message.");
       return NO;
     }
@@ -154,9 +183,11 @@ export class RoomCore {
     if (msg.type === "hello") return this.hello(connId, msg, now);
     const m = this.memberByConn(connId);
     if (!m) {
+      this.out.reject?.({ conn: connId, type: msg.type, reason: "no_hello" });
       this.error(connId, "BAD_MESSAGE", "Say hello first.");
       return NO;
     }
+    if (msg.type === "resync") return this.resync(m, now);
     return msg.type === "action" ? this.action(m, msg.payload, now) : this.hostCmd(m, msg.cmd, now);
   }
 
@@ -175,13 +206,18 @@ export class RoomCore {
     return YES;
   }
 
+  /**
+   * Alarm handler. Broadcasts only if something a client can see changed: clients run countdowns from
+   * deadlines and `now`, so a watchdog or early alarm that moves nothing sends nothing.
+   */
   tick(now: number): void {
+    const before = this.visible();
     if (this.s.hostGoneAt !== null && now >= this.s.hostGoneAt + LIMITS.hostGraceMs) this.transferHost();
     if (this.s.phase === "playing") {
       this.s.gameState = this.game.onTimer(this.s.gameState, now);
       this.checkOver();
     }
-    this.broadcast(now);
+    if (this.visible() !== before) this.broadcast(now);
   }
 
   nextAlarmAt(): number | null {
@@ -237,18 +273,35 @@ export class RoomCore {
 
   /**
    * Lobby only: if `kind` is at `cap`, remove its longest-disconnected member (never a connected one,
-   * never the host). Returns true if there is room afterwards.
+   * never the host, never one gone for less than LIMITS.evictGraceMs). Returns true if there is room afterwards.
    */
-  private makeRoom(kind: Member["kind"], cap: number): boolean {
+  private makeRoom(kind: Member["kind"], cap: number, now: number): boolean {
     const same = this.s.members.filter((x) => x.kind === kind);
     if (same.length < cap) return true;
     if (this.s.phase !== "lobby") return false;
     const victim = same
-      .filter((x) => x.connId === null && x.id !== this.s.hostId)
+      .filter((x) => x.connId === null && x.id !== this.s.hostId && now - (x.disconnectedAt ?? 0) >= LIMITS.evictGraceMs)
       .sort((a, b) => (a.disconnectedAt ?? 0) - (b.disconnectedAt ?? 0) || a.joinSeq - b.joinSeq)[0];
     if (!victim) return false;
     this.s.members = this.s.members.filter((x) => x !== victim);
+    this.lastResync.delete(victim.id);
     return true;
+  }
+
+  /** Lobby only: a disconnected non-host `kind` member is still inside its eviction grace, so a seat will free up. */
+  private seatFreeingSoon(kind: Member["kind"]): boolean {
+    return this.s.phase === "lobby" && this.s.members.some((x) => x.kind === kind && x.connId === null && x.id !== this.s.hostId);
+  }
+
+  /** Refusal text for a full room, with a hint to retry when a seat is only held by someone's grace period. */
+  private fullMessage(kind: Member["kind"]): string {
+    const base = kind === "player" ? `This room is full (${LIMITS.maxPlayers} players).` : `This room already has ${LIMITS.maxScreens} screens.`;
+    return this.seatFreeingSoon(kind) ? `${base} Someone just dropped out, so try again in a minute.` : base;
+  }
+
+  /** A hello was refused. Hellos carry names and keys, so only the reason is logged. */
+  private rejectHello(connId: string, reason: string): void {
+    this.out.reject?.({ conn: connId, type: "hello", reason });
   }
 
   private memberByConn(connId: string): Member | undefined {
@@ -261,11 +314,15 @@ export class RoomCore {
 
   private hello(connId: string, msg: HelloMessage, now: number): Handled {
     if (!this.s.created) {
+      this.rejectHello(connId, "room_not_found");
       this.error(connId, "ROOM_NOT_FOUND", "That room doesn't exist or has closed.");
       this.out.close(connId);
       return NO;
     }
-    if (this.memberByConn(connId)) return NO; // duplicate hello on one socket
+    if (this.memberByConn(connId)) {
+      this.rejectHello(connId, "duplicate_hello"); // one socket, one seat
+      return NO;
+    }
 
     let m: Member | null | undefined = msg.token
       ? this.s.members.find((x) => x.token === msg.token && x.kind === msg.role)
@@ -278,7 +335,7 @@ export class RoomCore {
       m.connId = connId;
       m.disconnectedAt = null;
     } else {
-      m = this.addMember(connId, msg);
+      m = this.addMember(connId, msg, now);
       if (!m) return NO;
     }
 
@@ -298,30 +355,53 @@ export class RoomCore {
       this.checkOver(); // a reconnect can resume a paused game straight into its end
     }
     this.broadcast(now);
+    this.sendSync(m);
     return YES;
   }
 
-  private addMember(connId: string, msg: HelloMessage): Member | null {
+  /** The game's full-picture event (GameModule.sync) to one member, if a game is running and has one. */
+  private sendSync(m: Member): void {
+    if (this.s.phase !== "playing" || !this.game.sync || !m.connId) return;
+    const viewer: Viewer = m.kind === "screen" ? { kind: "screen" } : { kind: "player", playerId: m.id };
+    const payload = this.game.sync(this.s.gameState, viewer);
+    if (payload != null) this.out.send(m.connId, { type: "event", payload });
+  }
+
+  /** A client asks for the sync event again. Throttled per member: the payload can be large. */
+  private resync(m: Member, now: number): Handled {
+    const last = this.lastResync.get(m.id);
+    if (last !== undefined && now - last < RESYNC_MIN_MS) return NO;
+    if (this.s.phase !== "playing" || !this.game.sync) return NO;
+    this.lastResync.set(m.id, now);
+    this.sendSync(m);
+    return NO;
+  }
+
+  private addMember(connId: string, msg: HelloMessage, now: number): Member | null {
     let name = "Screen";
     if (msg.role === "player") {
       name = cleanName(msg.name ?? "");
       if (!name) {
+        this.rejectHello(connId, "no_name");
         this.error(connId, "BAD_MESSAGE", "Pick a name first.");
         return null;
       }
       // Name check runs before any eviction so a rejected newcomer never costs anyone their seat.
       const lower = name.toLowerCase();
       if (this.s.members.some((p) => p.kind === "player" && p.name.toLowerCase() === lower)) {
+        this.rejectHello(connId, "name_taken");
         this.error(connId, "NAME_TAKEN", `Someone here is already called ${name}.`);
         return null;
       }
-      if (!this.makeRoom("player", LIMITS.maxPlayers)) {
-        this.error(connId, "ROOM_FULL", `This room is full (${LIMITS.maxPlayers} players).`);
+      if (!this.makeRoom("player", LIMITS.maxPlayers, now)) {
+        this.rejectHello(connId, "room_full");
+        this.error(connId, "ROOM_FULL", this.fullMessage("player"));
         this.out.close(connId);
         return null;
       }
-    } else if (!this.makeRoom("screen", LIMITS.maxScreens)) {
-      this.error(connId, "SCREENS_FULL", `This room already has ${LIMITS.maxScreens} screens.`);
+    } else if (!this.makeRoom("screen", LIMITS.maxScreens, now)) {
+      this.rejectHello(connId, "screens_full");
+      this.error(connId, "SCREENS_FULL", this.fullMessage("screen"));
       this.out.close(connId);
       return null;
     }
@@ -340,9 +420,21 @@ export class RoomCore {
   }
 
   private action(m: Member, payload: unknown, now: number): Handled {
-    if (this.s.phase !== "playing" || m.kind !== "player") return NO;
+    const reject = (reason: string) =>
+      this.out.reject?.({ conn: m.connId!, player: m.id, type: `action:${label((payload as { t?: unknown } | null)?.t)}`, reason });
+    if (this.s.phase !== "playing") {
+      reject("not_playing");
+      return NO;
+    }
+    if (m.kind !== "player") {
+      reject("not_a_player");
+      return NO;
+    }
     const action = this.game.parseAction(payload);
-    if (action === null) return NO;
+    if (action === null) {
+      reject("bad_action");
+      return NO;
+    }
     const res = this.game.onAction(this.s.gameState, m.id, action, now);
     this.s.gameState = res.state;
     for (const ev of res.events ?? []) {
@@ -357,7 +449,9 @@ export class RoomCore {
   }
 
   private hostCmd(m: Member, cmd: HostCommand, now: number): Handled {
+    const reject = (reason: string) => this.out.reject?.({ conn: m.connId!, player: m.id, type: `host:${cmd.cmd}`, reason });
     if (m.id !== this.s.hostId) {
+      reject("not_host");
       this.error(m.connId!, "NOT_HOST", "Only the host can do that.");
       return NO;
     }
@@ -368,6 +462,7 @@ export class RoomCore {
         // Own-property lookup: ids like "constructor" or "__proto__" must not resolve via Object.prototype.
         const game = Object.prototype.hasOwnProperty.call(this.deps.games, cmd.gameId) ? this.deps.games[cmd.gameId] : undefined;
         if (!game) {
+          reject("unknown_game");
           this.error(m.connId!, "BAD_MESSAGE", "Unknown game.");
           return NO;
         }
@@ -378,7 +473,7 @@ export class RoomCore {
       }
       case "updateSettings":
         if (s.phase !== "lobby") return NO;
-        s.settings = this.game.parseSettings(cmd.settings);
+        s.settings = this.game.parseSettings(cmd.settings, s.settings);
         break;
       case "start": {
         if (s.phase !== "lobby") return NO;
@@ -409,6 +504,7 @@ export class RoomCore {
         const target = s.members.find((x) => x.id === cmd.playerId);
         if (!target || target.id === s.hostId) return NO;
         s.members = s.members.filter((x) => x !== target);
+        this.lastResync.delete(target.id);
         if (target.connId) {
           this.error(target.connId, "KICKED", "You were removed from the room.");
           this.out.close(target.connId);
@@ -444,11 +540,23 @@ export class RoomCore {
   private broadcast(now: number): void {
     const room = this.snapshot();
     for (const c of this.connected()) {
-      this.out.send(c.connId!, { type: "room", room, now });
+      // Per connection: a game may hide settings (e.g. Doodle Dash's custom words) from all but the host.
+      const settings = this.game.publicSettings
+        ? this.game.publicSettings(this.s.settings, { isHost: c.id === this.s.hostId, kind: c.kind, phase: this.s.phase })
+        : room.settings;
+      this.out.send(c.connId!, { type: "room", room: { ...room, settings }, now });
       if (this.s.phase === "playing") {
-        const viewer: Viewer = c.kind === "screen" ? { kind: "screen" } : { kind: "player", playerId: c.id };
-        this.out.send(c.connId!, { type: "view", payload: this.game.view(this.s.gameState, viewer), now });
+        this.out.send(c.connId!, { type: "view", payload: this.game.view(this.s.gameState, viewerOf(c)), now });
       }
     }
+  }
+
+  /**
+   * What broadcast() would send, minus `now`, as one string. Serialized eagerly because game rules may
+   * mutate their state in place. Views go over the wire as JSON, so comparing JSON is exact.
+   */
+  private visible(): string {
+    const views = this.s.phase === "playing" ? this.connected().map((c) => this.game.view(this.s.gameState, viewerOf(c))) : null;
+    return JSON.stringify([this.snapshot(), views]);
   }
 }

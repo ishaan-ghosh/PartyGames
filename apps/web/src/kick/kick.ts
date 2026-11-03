@@ -22,3 +22,14 @@ export function pendingKick(kickable: PublicPlayer[], kickId: string | null): { 
   const target = kickId === null ? undefined : kickable.find((p) => p.id === kickId);
   return { target, stale: kickId !== null && !target };
 }
+
+/**
+ * After kicking `kickedId` from the lobby, which kickable chip (by player id, in display order)
+ * should take focus: the next one, else the previous, else null (the caller falls back to the host
+ * panel). The kicked chip is about to disappear, so focus mustn't fall to <body>.
+ */
+export function focusAfterKick(order: string[], kickedId: string): string | null {
+  const i = order.indexOf(kickedId);
+  if (i === -1) return order[0] ?? null;
+  return order[i + 1] ?? order[i - 1] ?? null;
+}

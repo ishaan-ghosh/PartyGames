@@ -1,7 +1,4 @@
-export function normalizeGuess(s: string): string {
-  return s.trim().toLowerCase().replace(/\s+/g, " ");
-}
-
+/** Edit distance. Games build their own matching on top (e.g. Doodle Dash's matchGuess). */
 export function levenshtein(a: string, b: string): number {
   if (a === b) return 0;
   let prev = Array.from({ length: b.length + 1 }, (_, i) => i);
@@ -14,10 +11,4 @@ export function levenshtein(a: string, b: string): number {
     prev = cur;
   }
   return prev[b.length]!;
-}
-
-export function isCloseGuess(guess: string, word: string): boolean {
-  const g = normalizeGuess(guess);
-  const w = normalizeGuess(word);
-  return w.length >= 4 && g !== w && levenshtein(g, w) === 1;
 }

@@ -9,14 +9,36 @@ function clampInt(v: unknown, min: number, max: number, fallback: number): numbe
   return typeof v === "number" && Number.isFinite(v) ? Math.min(max, Math.max(min, Math.round(v))) : fallback;
 }
 
-export function parseSettings(input: unknown): DoodleSettings {
+/**
+ * What a connection sees of the settings. Custom words are the host's secret: only a host on a phone
+ * gets them, and only outside play (to edit in the lobby); everyone else, the TV included even when it
+ * is the host, gets their count. During play the host phone gets the count too: the host can pass to a
+ * phone that is guessing, and the words would give away what is being drawn.
+ */
+export type PublicDoodleSettings = Omit<DoodleSettings, "customWords"> & { customWordCount: number };
+
+export function publicSettings(
+  s: DoodleSettings,
+  to: { isHost: boolean; kind: "screen" | "player"; phase: "lobby" | "playing" },
+): DoodleSettings | PublicDoodleSettings {
+  if (to.isHost && to.kind === "player" && to.phase !== "playing") return s;
+  return { rounds: s.rounds, drawTime: s.drawTime, difficulty: s.difficulty, customWordCount: s.customWords.length };
+}
+
+/**
+ * Cleans a settings update. Without a `customWords` array the current words (`prev`) are kept, so a
+ * form that only sees the count can change everything else; `addCustomWords` appends to them.
+ */
+export function parseSettings(input: unknown, prev?: DoodleSettings): DoodleSettings {
   const o = (typeof input === "object" && input !== null ? input : {}) as Record<string, unknown>;
   const difficulty = DIFFICULTIES.includes(o.difficulty as Difficulty)
     ? (o.difficulty as Difficulty)
     : defaultSettings.difficulty;
+  const base: unknown[] = Array.isArray(o.customWords) ? o.customWords : (prev?.customWords ?? []);
+  const added: unknown[] = Array.isArray(o.addCustomWords) ? o.addCustomWords : [];
   const seen = new Set<string>();
   const customWords: string[] = [];
-  for (const w of Array.isArray(o.customWords) ? o.customWords : []) {
+  for (const w of [...base, ...added]) {
     if (typeof w !== "string") continue;
     const t = w.trim().replace(/\s+/g, " ");
     const k = t.toLowerCase();

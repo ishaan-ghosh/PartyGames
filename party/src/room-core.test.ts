@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import type { GameModule, ServerMsg } from "@party/shared";
+import { LIMITS, type GameModule, type ServerMsg } from "@party/shared";
+import type { Rejection } from "./rate-limit";
 import { RoomCore, type CoreDeps, type Outbox } from "./room-core";
 
 interface CState { count: number; target: number; endsAt: number | null; players: string[]; names: Record<string, string>; presence: Record<string, boolean> }
@@ -37,13 +38,14 @@ const counter: GameModule<CState, CAction, { target: number }> = {
   results: (s) => s.players.map((id) => ({ playerId: id, name: s.names[id] ?? "?", score: s.count })),
 };
 
-function setup(opts: { created?: boolean } = {}) {
+function setup(opts: { created?: boolean; game?: GameModule<CState, CAction, { target: number }> } = {}) {
   const sent: { to: string; msg: ServerMsg }[] = [];
   const closed: string[] = [];
   /** Sends and closes in the order they happened, e.g. "send:c1:error" / "close:c1". */
   const log: string[] = [];
+  const rejects: Rejection[] = [];
   let n = 0;
-  const deps: CoreDeps = { newId: () => `id${++n}`, newSeed: () => 7, games: { counter }, defaultGameId: "counter" };
+  const deps: CoreDeps = { newId: () => `id${++n}`, newSeed: () => 7, games: { counter: opts.game ?? counter }, defaultGameId: "counter" };
   const out: Outbox = {
     send: (to, msg) => {
       sent.push({ to, msg });
@@ -53,6 +55,7 @@ function setup(opts: { created?: boolean } = {}) {
       closed.push(c);
       log.push(`close:${c}`);
     },
+    reject: (r) => rejects.push(r),
   };
   const core = new RoomCore("ABCD", deps, out);
   if (opts.created !== false) core.create("HOSTKEY", 0);
@@ -66,7 +69,7 @@ function setup(opts: { created?: boolean } = {}) {
   const screen = (conn: string, extra: Record<string, unknown> = {}, now = 0) =>
     core.message(conn, { type: "hello", role: "screen", ...extra }, now);
   const host = (conn: string, cmd: object, now = 0) => core.message(conn, { type: "host", cmd }, now);
-  return { core, sent, closed, log, msgs, last, id, player, screen, host, deps };
+  return { core, sent, closed, log, rejects, msgs, last, id, player, screen, host, deps };
 }
 
 /** Screen s1 is host (has the host key); Ana (c1) and Ben (c2) are in the lobby. */
@@ -467,18 +470,19 @@ describe("RoomCore: lobby eviction for caps", () => {
     h.core.disconnect("c0", 1);
     h.core.disconnect("c3", 10);
     h.core.disconnect("c5", 5);
-    h.player("n1", "New1", {}, 20);
+    const later = LIMITS.evictGraceMs + 10;
+    h.player("n1", "New1", {}, later + 20);
     expect(h.last("n1", "welcome")).toBeDefined();
     let names = h.last("n1", "room")!.room.players.map((p) => p.name);
     expect(names).not.toContain("P5");
     expect(names).toContain("P3");
     expect(names).toContain("P0");
     expect(names).toHaveLength(12);
-    h.player("n2", "New2", {}, 21);
+    h.player("n2", "New2", {}, later + 21);
     names = h.last("n2", "room")!.room.players.map((p) => p.name);
     expect(names).not.toContain("P3");
     expect(names).toContain("P0");
-    h.player("n3", "New3", {}, 22);
+    h.player("n3", "New3", {}, later + 22);
     expect(h.last("n3", "error")?.code).toBe("ROOM_FULL");
     expect(h.closed).toContain("n3");
   });
@@ -488,13 +492,86 @@ describe("RoomCore: lobby eviction for caps", () => {
     h.player("c1", "Ana"); // host
     for (let i = 0; i < 4; i++) h.screen(`s${i}`);
     h.core.disconnect("s2", 5);
-    h.screen("s4", {}, 10);
+    h.screen("s4", {}, LIMITS.evictGraceMs + 10);
     expect(h.last("s4", "welcome")?.you.kind).toBe("screen");
     const room = h.last("s4", "room")!.room;
     expect(room.screens).toHaveLength(4);
     expect(room.screens.every((s) => s.connected)).toBe(true);
-    h.screen("s5", {}, 11);
+    h.screen("s5", {}, LIMITS.evictGraceMs + 11);
     expect(h.last("s5", "error")?.code).toBe("SCREENS_FULL");
+  });
+
+  it("never evicts anyone disconnected for less than the grace period", () => {
+    const h = setup();
+    for (let i = 0; i < 12; i++) h.player(`c${i}`, `P${i}`);
+    h.core.disconnect("c5", 0);
+    h.core.disconnect("c3", 30_000);
+    // Only P5 is past grace at 50 s: it goes, P3 (asleep 20 s) stays.
+    h.player("n1", "New1", {}, 50_000);
+    let names = h.last("n1", "room")!.room.players.map((p) => p.name);
+    expect(names).not.toContain("P5");
+    expect(names).toContain("P3");
+    h.player("n2", "New2", {}, 30_000 + LIMITS.evictGraceMs - 1);
+    expect(h.last("n2", "error")?.code).toBe("ROOM_FULL");
+    expect(h.closed).toContain("n2");
+    h.player("n3", "New3", {}, 30_000 + LIMITS.evictGraceMs);
+    names = h.last("n3", "room")!.room.players.map((p) => p.name);
+    expect(names).not.toContain("P3");
+    expect(names).toContain("New3");
+  });
+
+  it("applies the grace period to screens too", () => {
+    const h = setup();
+    h.player("c1", "Ana");
+    for (let i = 0; i < 4; i++) h.screen(`s${i}`);
+    h.core.disconnect("s2", 1000);
+    h.screen("s4", {}, 1000 + LIMITS.evictGraceMs - 1);
+    expect(h.last("s4", "error")?.code).toBe("SCREENS_FULL");
+    h.screen("s5", {}, 1000 + LIMITS.evictGraceMs);
+    expect(h.last("s5", "welcome")?.you.kind).toBe("screen");
+  });
+
+  it("tells a refused newcomer to try again soon while a seat is only held by the grace period", () => {
+    const h = setup();
+    for (let i = 0; i < 12; i++) h.player(`c${i}`, `P${i}`);
+    h.player("n0", "New0", {}, 500);
+    expect(h.last("n0", "error")?.message).not.toMatch(/try again/i);
+    h.core.disconnect("c4", 1000);
+    h.player("n1", "New1", {}, 2000);
+    expect(h.last("n1", "error")).toMatchObject({ code: "ROOM_FULL", message: expect.stringMatching(/try again in a minute/) });
+    h.player("n2", "New2", {}, 1000 + LIMITS.evictGraceMs);
+    expect(h.last("n2", "welcome")).toBeDefined();
+
+    const g = setup();
+    g.player("c1", "Ana");
+    for (let i = 0; i < 4; i++) g.screen(`s${i}`);
+    g.screen("s4");
+    expect(g.last("s4", "error")?.message).not.toMatch(/try again/i);
+    g.core.disconnect("s2", 1000);
+    g.screen("s5", {}, 2000);
+    expect(g.last("s5", "error")).toMatchObject({ code: "SCREENS_FULL", message: expect.stringMatching(/try again in a minute/) });
+  });
+
+  it("does not promise a seat mid-game, when nobody can be evicted", () => {
+    const h = setup();
+    h.screen("s1", { hostKey: "HOSTKEY" });
+    for (let i = 0; i < 12; i++) h.player(`c${i}`, `P${i}`);
+    h.host("s1", { cmd: "start" });
+    h.core.disconnect("c4", 5);
+    h.player("n1", "New1", {}, 10);
+    expect(h.last("n1", "error")?.code).toBe("ROOM_FULL");
+    expect(h.last("n1", "error")?.message).not.toMatch(/try again/i);
+  });
+
+  it("keeps a sleeping phone's seat so it can come back after a refused newcomer", () => {
+    const h = setup();
+    for (let i = 0; i < 12; i++) h.player(`c${i}`, `P${i}`);
+    const t4 = h.last("c4", "welcome")!.token;
+    h.core.disconnect("c4", 1000);
+    h.player("n1", "New1", {}, 2000);
+    expect(h.last("n1", "error")?.code).toBe("ROOM_FULL");
+    h.player("c4b", "ignored", { token: t4 }, 3000);
+    expect(h.last("c4b", "welcome")?.you.id).toBe(h.id("c4"));
   });
 
   it("never evicts connected members", () => {
@@ -583,5 +660,229 @@ describe("RoomCore: name and avatar hygiene", () => {
     expect(players[0]!.avatar).toEqual({ emoji: family, color: "#112233" });
     expect(players[1]!.avatar.emoji).toBe("🙂");
     expect(players[1]!.avatar.color).toBe("#445566");
+  });
+});
+
+describe("RoomCore: logging rejected messages", () => {
+  it("reports unparseable messages with only a sanitized type label", () => {
+    const h = setup();
+    h.core.message("c1", { type: "bogus", secret: "my password" }, 0);
+    h.core.message("c2", { type: "has spaces and stuff" }, 0);
+    h.core.message("c3", null, 0);
+    expect(h.rejects).toEqual([
+      { conn: "c1", type: "bogus", reason: "bad_message" },
+      { conn: "c2", type: "?", reason: "bad_message" },
+      { conn: "c3", type: "?", reason: "bad_message" },
+    ]);
+    expect(JSON.stringify(h.rejects)).not.toContain("password");
+  });
+
+  it("reports messages before hello", () => {
+    const h = setup();
+    h.core.message("c1", { type: "action", payload: { t: "inc" } }, 0);
+    expect(h.rejects).toEqual([{ conn: "c1", type: "action", reason: "no_hello" }]);
+  });
+
+  it("reports host commands from non-hosts and unknown games, with the player id", () => {
+    const h = lobby();
+    h.host("c1", { cmd: "kick", playerId: h.id("c2") });
+    h.host("s1", { cmd: "selectGame", gameId: "nope" });
+    expect(h.rejects).toEqual([
+      { conn: "c1", player: h.id("c1"), type: "host:kick", reason: "not_host" },
+      { conn: "s1", player: h.id("s1"), type: "host:selectGame", reason: "unknown_game" },
+    ]);
+  });
+
+  it("reports actions the game module refuses to parse, and actions outside play", () => {
+    const h = lobby();
+    h.core.message("c1", { type: "action", payload: { t: "inc" } }, 0);
+    h.host("s1", { cmd: "start" });
+    h.core.message("c1", { type: "action", payload: { t: "nope", text: "hidden" } }, 0);
+    h.core.message("s1", { type: "action", payload: { t: "inc" } }, 0);
+    expect(h.rejects).toEqual([
+      { conn: "c1", player: h.id("c1"), type: "action:inc", reason: "not_playing" },
+      { conn: "c1", player: h.id("c1"), type: "action:nope", reason: "bad_action" },
+      { conn: "s1", player: h.id("s1"), type: "action:inc", reason: "not_a_player" },
+    ]);
+  });
+
+  it("reports refused hellos with only a reason, never the name or keys", () => {
+    const none = setup({ created: false });
+    none.player("x1", "Ana", { hostKey: "SECRETKEY" });
+    expect(none.rejects).toEqual([{ conn: "x1", type: "hello", reason: "room_not_found" }]);
+
+    const h = lobby();
+    h.player("c1", "Ana"); // same socket again
+    h.player("c3", "\u200b");
+    h.player("c4", "ana");
+    for (let i = 0; i < 10; i++) h.player(`f${i}`, `F${i}`);
+    h.player("c5", "Zed");
+    for (let i = 0; i < 3; i++) h.screen(`t${i}`);
+    h.screen("t3");
+    expect(h.rejects).toEqual([
+      { conn: "c1", type: "hello", reason: "duplicate_hello" },
+      { conn: "c3", type: "hello", reason: "no_name" },
+      { conn: "c4", type: "hello", reason: "name_taken" },
+      { conn: "c5", type: "hello", reason: "room_full" },
+      { conn: "t3", type: "hello", reason: "screens_full" },
+    ]);
+    expect(JSON.stringify(h.rejects)).not.toMatch(/Zed|ana|SECRETKEY/i);
+  });
+
+  it("does not report accepted messages", () => {
+    const h = started();
+    h.core.message("c1", { type: "action", payload: { t: "inc" } }, 0);
+    expect(h.rejects).toEqual([]);
+  });
+});
+
+describe("RoomCore: tick only broadcasts visible changes", () => {
+  it("sends nothing when an alarm fires and nothing changed (watchdog, early alarm)", () => {
+    const l = lobby();
+    const before = l.sent.length;
+    l.core.tick(5_000);
+    expect(l.sent.length).toBe(before);
+    const g = started();
+    const mid = g.sent.length;
+    g.core.tick(999); // game timer not due yet
+    expect(g.sent.length).toBe(mid);
+  });
+
+  it("broadcasts room and views to everyone when a game timer moves the game on", () => {
+    const h = started();
+    const before = h.sent.length;
+    h.core.tick(1000);
+    const fresh = h.sent.slice(before);
+    for (const c of ["s1", "c1", "c2"]) {
+      expect(fresh.some((x) => x.to === c && x.msg.type === "room")).toBe(true);
+      expect(fresh.some((x) => x.to === c && x.msg.type === "view")).toBe(true);
+    }
+    expect(h.last("c1", "view")!.payload).toMatchObject({ count: 1 });
+  });
+
+  it("broadcasts a host transfer", () => {
+    const h = lobby();
+    h.core.disconnect("s1", 1000);
+    const before = h.sent.length;
+    h.core.tick(16_000);
+    expect(h.sent.length).toBeGreaterThan(before);
+    expect(h.last("c1", "room")!.room.hostId).toBe(h.id("c1"));
+  });
+
+  it("broadcasts when a timer ends the game", () => {
+    const h = started();
+    h.core.message("c1", { type: "action", payload: { t: "inc" } }, 10);
+    h.core.message("c1", { type: "action", payload: { t: "inc" } }, 20);
+    h.core.tick(1000); // third count reaches the target of 3
+    expect(h.last("c1", "room")!.room).toMatchObject({ phase: "lobby", lastResults: expect.any(Array) });
+  });
+});
+
+describe("RoomCore: private settings", () => {
+  /** Counter whose settings hide `target` from everyone but a host on a phone, and keep it when omitted. */
+  const secretive: GameModule<CState, CAction, { target: number }> = {
+    ...counter,
+    parseSettings: (input, prev) => {
+      const t = (input as { target?: unknown } | null)?.target;
+      return { target: typeof t === "number" ? t : (prev?.target ?? 3) };
+    },
+    publicSettings: (s, to) => (to.isHost && to.kind === "player" ? s : { hidden: true }),
+  };
+  const settingsOf = (h: ReturnType<typeof setup>, conn: string) => h.last(conn, "room")!.room.settings;
+
+  it("sends each connection the game's public settings for it: full only to a host player", () => {
+    const h = setup({ game: secretive });
+    h.player("c1", "Ana", { hostKey: "HOSTKEY" });
+    h.player("c2", "Ben");
+    h.screen("s1");
+    h.host("c1", { cmd: "updateSettings", settings: { target: 9 } });
+    expect(settingsOf(h, "c1")).toEqual({ target: 9 });
+    expect(settingsOf(h, "c2")).toEqual({ hidden: true });
+    expect(settingsOf(h, "s1")).toEqual({ hidden: true });
+    expect(h.core.serialize().settings).toEqual({ target: 9 });
+  });
+
+  it("tells the game the room's phase, so it can hide more during play", () => {
+    const seen: string[] = [];
+    const h = setup({ game: { ...secretive, publicSettings: (s, to) => (seen.push(to.phase), s) } });
+    h.player("c1", "Ana", { hostKey: "HOSTKEY" });
+    h.player("c2", "Ben");
+    expect(new Set(seen)).toEqual(new Set(["lobby"]));
+    seen.length = 0;
+    h.host("c1", { cmd: "start" });
+    expect(new Set(seen)).toEqual(new Set(["playing"]));
+  });
+
+  it("hides them from a screen even when it is the host", () => {
+    const h = setup({ game: secretive });
+    h.screen("s1", { hostKey: "HOSTKEY" });
+    h.player("c1", "Ana");
+    expect(settingsOf(h, "s1")).toEqual({ hidden: true });
+  });
+
+  it("passes the current settings to the parser so a partial update keeps hidden fields", () => {
+    const h = setup({ game: secretive });
+    h.player("c1", "Ana", { hostKey: "HOSTKEY" });
+    h.host("c1", { cmd: "updateSettings", settings: { target: 9 } });
+    h.host("c1", { cmd: "updateSettings", settings: { hidden: true } });
+    expect(h.core.serialize().settings).toEqual({ target: 9 });
+  });
+});
+
+describe("RoomCore: game sync events", () => {
+  /** Counter whose `sync` returns the full count, tagged with who it was built for. */
+  const synced: GameModule<CState, CAction, { target: number }> = {
+    ...counter,
+    sync: (s, v) => ({ sync: s.count, for: v.kind === "screen" ? "screen" : v.playerId }),
+  };
+  const syncs = (h: ReturnType<typeof setup>, conn: string) =>
+    h.msgs(conn, "event").map((m) => (m as { payload: unknown }).payload).filter((p) => (p as { sync?: number }).sync !== undefined);
+  function startedSynced() {
+    const h = setup({ game: synced });
+    h.screen("s1", { hostKey: "HOSTKEY" });
+    h.player("c1", "Ana");
+    h.player("c2", "Ben");
+    h.host("s1", { cmd: "start" }, 0);
+    return h;
+  }
+
+  it("sends the sync event to a connection that joins or rejoins mid-game, after its view", () => {
+    const h = startedSynced();
+    expect(syncs(h, "c1")).toEqual([]); // starting a game sends none
+    h.core.message("c1", { type: "action", payload: { t: "inc" } }, 1);
+    const { token } = h.last("c1", "welcome")!;
+    h.core.disconnect("c1", 2);
+    h.log.length = 0;
+    h.core.message("c9", { type: "hello", role: "player", token }, 3);
+    expect(syncs(h, "c9")).toEqual([{ sync: 1, for: h.id("c9") }]);
+    expect(h.log.filter((l) => l.startsWith("send:c9"))).toEqual(["send:c9:welcome", "send:c9:room", "send:c9:view", "send:c9:event"]);
+    expect(syncs(h, "c2")).toEqual([]); // only the joiner
+    h.screen("s2", {}, 3);
+    expect(syncs(h, "s2")).toEqual([{ sync: 1, for: "screen" }]);
+  });
+
+  it("answers resync with the sync event to that connection only, at most once a second", () => {
+    const h = startedSynced();
+    expect(h.core.message("s1", { type: "resync" }, 100)).toEqual({ persist: false });
+    expect(syncs(h, "s1")).toEqual([{ sync: 0, for: "screen" }]);
+    expect(syncs(h, "c1")).toEqual([]);
+    h.core.message("s1", { type: "resync" }, 900);
+    expect(syncs(h, "s1")).toHaveLength(1);
+    h.core.message("s1", { type: "resync" }, 1100);
+    expect(syncs(h, "s1")).toHaveLength(2);
+    h.core.message("c1", { type: "resync" }, 1100); // throttled per connection
+    expect(syncs(h, "c1")).toEqual([{ sync: 0, for: h.id("c1") }]);
+  });
+
+  it("ignores resync in the lobby, before hello, and for games without sync", () => {
+    const h = setup({ game: synced });
+    h.core.message("c0", { type: "resync" }, 0);
+    expect(h.last("c0", "error")?.code).toBe("BAD_MESSAGE");
+    h.player("c1", "Ana");
+    h.core.message("c1", { type: "resync" }, 0);
+    expect(h.msgs("c1", "event")).toEqual([]);
+    const plain = started();
+    plain.core.message("c1", { type: "resync" }, 5000);
+    expect(plain.msgs("c1", "event")).toEqual([]);
   });
 });

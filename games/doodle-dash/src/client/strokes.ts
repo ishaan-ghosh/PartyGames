@@ -15,6 +15,8 @@ export function applyOp(strokes: Stroke[], op: StrokeOp): Stroke[] {
       return strokes.slice(0, -1);
     case "clear":
       return [];
+    case "sync":
+      return op.strokes;
   }
 }
 

@@ -38,6 +38,17 @@ These decisions were made while planning. Where the spec and the plan differ, th
    - Most room tests target `RoomCore` with plain Vitest.
    - A small Cloudflare workers-pool suite smoke-tests the Durable Object wiring: create, hello, unknown room, non-JSON.
 
+## Protocol as built (post-v1)
+
+The task listings below are the original plan. The code has since moved on; the current message and action shapes are (source of truth: `shared/src/protocol.ts`, `shared/src/game.ts`, `games/doodle-dash/src/rules/types.ts`):
+
+- **Client → room:** `hello {role, token?, hostKey?, name?, avatar?}`, `action {payload}`, `host {cmd}` with `selectGame {gameId}` | `updateSettings {settings}` | `start` | `skip` | `endGame` | `kick {playerId}`, and `resync` (asks for the game's sync event again; answered at most once a second per member).
+- **Room → client:** `welcome {token, you}`, `room {room, now}`, `view {payload, now}`, `event {payload}`, `error {code, message}` (codes include `KICKED` and `REPLACED`). `room.settings` is per connection (see `publicSettings` below).
+- **Optional `GameModule` hooks:** `sync(state, viewer)` (full-picture event sent on (re)join mid-game and on `resync`), `publicSettings(settings, {isHost, kind, phase})`, `parseSettings(input, prev?)`, `splitSave`/`joinSave` (bulky state stored under its own keys, rewritten only when its `rev` changes).
+- **Doodle Dash actions:** `choose {index}`, `guess {text}`, `strokeBegin {id, tool, color, size, points}`, `strokeAppend {id, points}` (`id` is the drawer's own stroke key; an append only extends the stroke begun with that id), `fill {color, x, y}`, `undo`, `clear`.
+- **Doodle Dash stroke channel (`event` payloads, `StrokeOp`):** `begin {seq, stroke}`, `append {seq, strokeId, points}`, `undo {seq}`, `clear {seq}`, `sync {seq, strokes}`. `seq` is the stroke version (`opSeq`), which also moves on a new turn's wipe. Views carry no strokes, only `opSeq` and `strokeSig` (`"count:numbers"`); clients ask for `resync` on a gap or mismatch. The drawer's view also has `fillsLeft` (fills capped per turn).
+- **Doodle Dash settings:** custom words go only to a host on a phone, and only outside play (lobby/results); during play the host phone, like everyone else and every TV, gets `customWordCount`. An update without `customWords` keeps the current list; `addCustomWords` appends.
+
 ## Global Constraints
 
 - Node ≥ 22. pnpm is pinned via the `packageManager` field.
@@ -141,7 +152,7 @@ package.json, pnpm-workspace.yaml, tsconfig.base.json, .gitignore, .nvmrc, playw
 shared/                      @party/shared — no React, no Cloudflare
   src/rng.ts                 seeded PRNG (resumable)
   src/codes.ts               room code alphabet/generation/validation
-  src/text.ts                guess normalization, Levenshtein, isCloseGuess
+  src/text.ts                Levenshtein (normalizeGuess/isCloseGuess were removed post-v1; Doodle Dash has matchGuess)
   src/protocol.ts            zod ClientMsg schema, ServerMsg/RoomSnapshot types, LIMITS
   src/game.ts                GameModule interface + PlayerInfo/Viewer/GameEvent types
   src/tokens.css             design tokens (CSS variables)
@@ -181,7 +192,7 @@ e2e/doodle.spec.ts
 **Interfaces:**
 - Produces: `class Rng { seed: number; constructor(seed: number); next(): number; int(maxExclusive: number): number; pick<T>(items: readonly T[]): T; sample<T>(items: readonly T[], n: number): T[] }`
 - Produces: `CODE_ALPHABET: string; makeRoomCode(random?: () => number): string; normalizeRoomCode(input: string): string; isRoomCode(input: string): boolean`
-- Produces: `normalizeGuess(s: string): string; levenshtein(a: string, b: string): number; isCloseGuess(guess: string, word: string): boolean`
+- Produces: `normalizeGuess(s: string): string; levenshtein(a: string, b: string): number; isCloseGuess(guess: string, word: string): boolean` (as built: only `levenshtein` remains; guess matching lives in `games/doodle-dash/src/rules/chars.ts`)
 
 - [ ] **Step 1: Make sure pnpm is available** (this needs the user's approval because it's a global install)
 
@@ -828,11 +839,12 @@ export type StrokeOp =
   | { op: "begin"; seq: number; stroke: Stroke }
   | { op: "append"; seq: number; strokeId: number; points: number[] }
   | { op: "undo"; seq: number }
-  | { op: "clear"; seq: number };
+  | { op: "clear"; seq: number }
+  | { op: "sync"; seq: number; strokes: Stroke[] }; // added post-v1: full list for one connection
 
 export type StrokeAction =
-  | { t: "strokeBegin"; tool: "pen" | "eraser"; color: number; size: number; points: number[] }
-  | { t: "strokeAppend"; points: number[] }
+  | { t: "strokeBegin"; id: number; tool: "pen" | "eraser"; color: number; size: number; points: number[] }
+  | { t: "strokeAppend"; id: number; points: number[] }
   | { t: "fill"; color: number; x: number; y: number }
   | { t: "undo" }
   | { t: "clear" };
@@ -859,13 +871,16 @@ export interface DoodleState {
   solvers: string[]; // in order of guessing
   turnPoints: Record<string, number>;
   strokes: Stroke[];
-  opSeq: number; // increases forever; clients drop stale ops
+  opSeq: number; // stroke version: +1 per accepted stroke op and per turn wipe
   nextStrokeId: number;
+  openStroke: { key: number; strokeId: number } | null; // last strokeBegin's client id → server stroke
   ink: number; // numbers received this turn
+  fills: number; // fills accepted this turn (capped at MAX_FILLS)
   feed: FeedItem[];
   nextFeedId: number;
   usedWords: string[];
   drawerGoneAt: number | null;
+  paused: boolean; // waiting in reveal for enough players to reconnect
 }
 ```
 
@@ -1349,6 +1364,7 @@ git commit -m "feat(doodle): settings, word lists and turn flow"
     - `word: string | null`, `hint: string | null`, `choices: string[] | null`
     - `you: { id: string; role: "drawer" | "guesser" | "solver" | "spectator" } | null`
     - `feed: ViewFeedItem[]`, `strokes: Stroke[]`, `opSeq: number`
+    - As built: `strokes` was replaced by `strokeSig: string` (strokes travel as `StrokeOp` events), and the view gained `waiting?: boolean` and the drawer-only `fillsLeft?: number`.
 
 - [ ] **Step 1: Write the failing tests**
 

@@ -1,6 +1,6 @@
 import type { PublicPlayer, RoomSnapshot } from "@party/shared";
 import { describe, expect, it } from "vitest";
-import { isKickable, kickablePlayers, pendingKick } from "./kick";
+import { focusAfterKick, isKickable, kickablePlayers, pendingKick } from "./kick";
 
 const p = (id: string, name: string, isHost = false): PublicPlayer => ({
   id, name, isHost, connected: true, avatar: { emoji: "🐙", color: "#ff0000" },
@@ -59,5 +59,20 @@ describe("pendingKick", () => {
     // The target left, or the viewer stopped being host.
     expect(pendingKick(kickablePlayers(room("a", [p("a", "Ana", true)]), "a"), "b")).toEqual({ target: undefined, stale: true });
     expect(pendingKick(kickablePlayers(r, "b"), "b")).toEqual({ target: undefined, stale: true });
+  });
+});
+
+describe("focusAfterKick", () => {
+  it("moves to the next kickable chip", () => {
+    expect(focusAfterKick(["a", "b", "c"], "a")).toBe("b");
+    expect(focusAfterKick(["a", "b", "c"], "b")).toBe("c");
+  });
+  it("falls back to the previous chip when the last one was kicked", () => {
+    expect(focusAfterKick(["a", "b", "c"], "c")).toBe("b");
+  });
+  it("has no chip to offer when nobody else is kickable (the caller picks the host panel)", () => {
+    expect(focusAfterKick(["a"], "a")).toBeNull();
+    expect(focusAfterKick([], "a")).toBeNull();
+    expect(focusAfterKick(["b"], "a")).toBe("b"); // target already gone: any remaining chip
   });
 });

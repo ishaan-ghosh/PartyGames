@@ -1,7 +1,8 @@
 import { LIMITS } from "@party/shared";
 import { SELF, env, evictDurableObject, runDurableObjectAlarm, runInDurableObject } from "cloudflare:test";
 import { describe, expect, it, vi } from "vitest";
-import type { SavedRoom } from "../../src/room-core";
+import { DEFAULT_GAME_ID, games } from "../../src/games";
+import { RoomCore, type SavedRoom } from "../../src/room-core";
 
 type Msg = { type: string; [k: string]: unknown };
 
@@ -98,10 +99,105 @@ describe("room lifecycle", () => {
     ws.send(JSON.stringify({ type: "hello", role: "player", name: "Ana", hostKey }));
     await vi.waitFor(() => expect(messages.some((m) => m.type === "welcome")).toBe(true));
     expect((await storageOf(code)).alarm).not.toBeNull();
+    await vi.waitFor(() => expect(messages.some((m) => m.type === "room")).toBe(true));
+    const seen = messages.length;
     expect(await runDurableObjectAlarm(stubFor(code))).toBe(true);
+    // A watchdog alarm that changes nothing a client can see sends nothing.
+    await new Promise((r) => setTimeout(r, 100));
+    expect(messages.length).toBe(seen);
     const { keys, alarm } = await storageOf(code);
     expect(keys).toContain("room");
     expect(alarm).not.toBeNull();
+    ws.close();
+  });
+
+  it("stores the drawing in parts beside the room record", async () => {
+    const { code, hostKey } = await createRoom();
+    const a = await open(code);
+    const b = await open(code);
+    a.ws.send(JSON.stringify({ type: "hello", role: "player", name: "Ana", hostKey }));
+    await vi.waitFor(() => expect(a.messages.some((m) => m.type === "welcome")).toBe(true));
+    b.ws.send(JSON.stringify({ type: "hello", role: "player", name: "Ben" }));
+    await vi.waitFor(() => expect(b.messages.some((m) => m.type === "welcome")).toBe(true));
+    a.ws.send(JSON.stringify({ type: "host", cmd: { cmd: "start" } }));
+    const lastView = (m: Msg[]) => m.filter((x) => x.type === "view").at(-1)?.payload as { drawerId: string; you: { id: string } } | undefined;
+    await vi.waitFor(() => expect(lastView(a.messages)).toBeDefined());
+    const drawer = lastView(a.messages)!.drawerId === lastView(a.messages)!.you.id ? a : b;
+    const watcher = drawer === a ? b : a;
+    drawer.ws.send(JSON.stringify({ type: "action", payload: { t: "choose", index: 0 } }));
+    for (let i = 0; i < 40; i++) {
+      drawer.ws.send(JSON.stringify({ type: "action", payload: { t: "strokeBegin", id: i, tool: "pen", color: 0, size: 0, points: [0.1, 0.1, 0.2, 0.2] } }));
+    }
+    await vi.waitFor(() => expect(watcher.messages.filter((m) => m.type === "event")).toHaveLength(40));
+    watcher.ws.send(JSON.stringify({ type: "action", payload: { t: "guess", text: "nope" } })); // persists
+    await vi.waitFor(async () => expect((await storageOf(code)).keys).toEqual(expect.arrayContaining(["room", "part:strokes.0", "part:strokes.1"])));
+    const saved = await runInDurableObject(stubFor(code), (_r, state) => state.storage.get<SavedRoom>("room"));
+    expect((saved!.gameState as { strokes: unknown[] }).strokes).toEqual([]);
+    expect(saved!.parts).toEqual(["strokes.0", "strokes.1"]);
+    a.ws.close();
+    b.ws.close();
+  });
+
+  it("restores a drawing saved in parts when the room wakes", async () => {
+    const { code } = await createRoom();
+    // Build a mid-drawing save with the real room logic, then plant it as this room's storage.
+    const core = new RoomCore(code, { newId: () => crypto.randomUUID(), newSeed: () => 1, games, defaultGameId: DEFAULT_GAME_ID }, { send: () => {}, close: () => {} });
+    core.create("k", Date.now());
+    core.message("x1", { type: "hello", role: "player", name: "Ana", hostKey: "k" }, Date.now());
+    core.message("x2", { type: "hello", role: "player", name: "Ben" }, Date.now());
+    core.message("x1", { type: "host", cmd: { cmd: "start" } }, Date.now());
+    for (const c of ["x1", "x2"]) core.message(c, { type: "action", payload: { t: "choose", index: 0 } }, Date.now());
+    for (let i = 0; i < 40; i++) {
+      for (const c of ["x1", "x2"]) {
+        core.message(c, { type: "action", payload: { t: "strokeBegin", id: i, tool: "pen", color: 0, size: 0, points: [0.1, 0.1, 0.2, 0.2] } }, Date.now());
+      }
+    }
+    const { saved, parts } = core.serializeSplit();
+    expect(saved.parts).toEqual(["strokes.0", "strokes.1"]);
+    const token = saved.members[0]!.token;
+    await runInDurableObject(stubFor(code), async (_room, state) => {
+      await state.storage.put({ room: saved, ...Object.fromEntries(Object.entries(parts).map(([k, p]) => [`part:${k}`, p.value])) });
+      await state.storage.deleteAlarm();
+    });
+    await evictDurableObject(stubFor(code), { webSockets: "close" });
+    const { ws, messages } = await open(code);
+    ws.send(JSON.stringify({ type: "hello", role: "player", token }));
+    await vi.waitFor(() => expect(messages.some((m) => m.type === "event")).toBe(true));
+    const sync = messages.find((m) => m.type === "event")!.payload as { op: string; strokes: unknown[] };
+    expect(sync.op).toBe("sync");
+    expect(sync.strokes).toHaveLength(40);
+    ws.close();
+  });
+
+  it("restores a drawing saved in more parts than one storage read can fetch (128 keys)", async () => {
+    const { code } = await createRoom();
+    const core = new RoomCore(code, { newId: () => crypto.randomUUID(), newSeed: () => 1, games, defaultGameId: DEFAULT_GAME_ID }, { send: () => {}, close: () => {} });
+    core.create("k", Date.now());
+    core.message("x1", { type: "hello", role: "player", name: "Ana", hostKey: "k" }, Date.now());
+    core.message("x2", { type: "hello", role: "player", name: "Ben" }, Date.now());
+    core.message("x1", { type: "host", cmd: { cmd: "start" } }, Date.now());
+    for (const c of ["x1", "x2"]) core.message(c, { type: "action", payload: { t: "choose", index: 0 } }, Date.now());
+    const total = 130 * 32 + 5; // 131 parts
+    for (let i = 0; i < total; i++) {
+      for (const c of ["x1", "x2"]) {
+        core.message(c, { type: "action", payload: { t: "strokeBegin", id: i, tool: "pen", color: 0, size: 0, points: [0.1, 0.1, 0.2, 0.2] } }, Date.now());
+      }
+    }
+    const { saved, parts } = core.serializeSplit();
+    expect(saved.parts!.length).toBeGreaterThan(128);
+    const token = saved.members[0]!.token;
+    await runInDurableObject(stubFor(code), async (_room, state) => {
+      const entries = [["room", saved], ...Object.entries(parts).map(([k, p]) => [`part:${k}`, p.value])];
+      for (let i = 0; i < entries.length; i += 128) await state.storage.put(Object.fromEntries(entries.slice(i, i + 128)));
+      await state.storage.deleteAlarm();
+    });
+    await evictDurableObject(stubFor(code), { webSockets: "close" });
+    const { ws, messages } = await open(code);
+    ws.send(JSON.stringify({ type: "hello", role: "player", token }));
+    await vi.waitFor(() => expect(messages.some((m) => m.type === "event")).toBe(true));
+    const sync = messages.find((m) => m.type === "event")!.payload as { op: string; strokes: unknown[] };
+    expect(sync.op).toBe("sync");
+    expect(sync.strokes).toHaveLength(total);
     ws.close();
   });
 
