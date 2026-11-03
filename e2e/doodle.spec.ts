@@ -22,6 +22,22 @@ async function inkedPixels(page: Page, canvasTestId = "screen-canvas"): Promise<
   });
 }
 
+/** Bounding box of the ink on a canvas, in its 800×600 backing-store pixels. */
+async function inkBounds(page: Page, canvasTestId: string) {
+  return page.getByTestId(canvasTestId).evaluate((c: HTMLCanvasElement) => {
+    const d = c.getContext("2d")!.getImageData(0, 0, c.width, c.height).data;
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    for (let y = 0; y < c.height; y++)
+      for (let x = 0; x < c.width; x++) {
+        const i = (y * c.width + x) * 4;
+        if (d[i + 3] === 255 && (d[i]! < 250 || d[i + 1]! < 250 || d[i + 2]! < 250)) {
+          minX = Math.min(minX, x); maxX = Math.max(maxX, x); minY = Math.min(minY, y); maxY = Math.max(maxY, y);
+        }
+      }
+    return { minX, minY, maxX, maxY };
+  });
+}
+
 test("screen + 3 phones play a turn, and a reloaded phone keeps its score", async ({ browser }) => {
   const screen = await (await browser.newContext({ viewport: { width: 1280, height: 720 } })).newPage();
   await screen.goto("/");
@@ -126,6 +142,22 @@ test("phones-only: a sideways drawer sees guesses beside the canvas and its stro
   for (let i = 1; i <= 12; i++) await host.mouse.move(box.x + box.width * (0.2 + i * 0.05), box.y + box.height * (0.2 + i * 0.04));
   await host.mouse.up();
   await expect.poll(() => inkedPixels(guest, "phone-canvas"), { timeout: 5000 }).toBeGreaterThan(200);
+
+  // The ink lands under the pointer: the stroke ran from (0.2, 0.2) to (0.8, 0.68) of the canvas,
+  // i.e. (160, 120)–(640, 408) on the 800×600 bitmap, give or take the 10px brush.
+  const ink = await inkBounds(host, "draw-canvas");
+  for (const [got, want] of [[ink.minX, 160], [ink.maxX, 640], [ink.minY, 120], [ink.maxY, 408]] as const) {
+    expect(Math.abs(got - want)).toBeLessThanOrEqual(10);
+  }
+  // The sideways drawer stays in normal flow, one viewport tall, like the portrait one: iOS Safari
+  // can hit-test touches on a position: fixed layer away from where it paints it, which drew
+  // strokes a constant distance below the finger.
+  const layout = await host.evaluate(() => ({
+    position: getComputedStyle(document.querySelector(".dd-phone-draw")!).position,
+    overflow: document.documentElement.scrollHeight - window.innerHeight,
+  }));
+  expect(layout.position).not.toBe("fixed");
+  expect(layout.overflow).toBeLessThanOrEqual(0);
 });
 
 test("the host kicks players from the lobby and during a game", async ({ browser }) => {
