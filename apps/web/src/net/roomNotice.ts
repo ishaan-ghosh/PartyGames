@@ -57,9 +57,73 @@ export function observeRoom(
   const midGame = prev.phase === "playing" && phase === "playing";
   let notice: RoomNoticeKind | null = null;
   if (midGame && prev.mode !== mode) notice = mode === "phones" ? "tv-lost" : "tv-back";
-  if (midGame && hostId === s.youId && prev.hostId !== s.youId) notice = "host";
-  if (midGame && prev.hostId === s.youId && hostId !== null && hostId !== s.youId) {
-    notice = s.room.screens.some((x) => x.id === hostId) ? "host-tv" : "host-player";
+  const host = midGame ? hostNotice(prev.hostId, s.room, s.youId) : null;
+  return { baseline, notice: host ?? notice };
+}
+
+/** The host notice for host moving from `prevHostId` to `room.hostId`, if it involves you. */
+function hostNotice(prevHostId: string | null, room: RoomSnapshot, youId: string): RoomNoticeKind | null {
+  const { hostId } = room;
+  if (hostId === youId && prevHostId !== youId) return "host";
+  if (prevHostId === youId && hostId !== null && hostId !== youId) {
+    return room.screens.some((x) => x.id === hostId) ? "host-tv" : "host-player";
   }
-  return { baseline, notice };
+  return null;
+}
+
+/** How long a TV drop or return must last before the phone hears about it (TV reloads take ~1-2 s). */
+export const NOTICE_HOLD_MS = 3000;
+
+/**
+ * Debounce state for room notices. `told` is the room as the player last heard it: its `mode` is the
+ * TV state they were last told (or that was current when nothing worth saying changed), everything
+ * else is current, since host changes are told at once. While a TV change is pending, `due` is when
+ * it gets told.
+ */
+export interface NoticeTracker {
+  told: NoticeBaseline | null;
+  due: number | null;
+}
+
+export const NO_NOTICES: NoticeTracker = { told: null, due: null };
+
+/**
+ * observeRoom with a hold on the TV notices only:
+ * - Host notices ("You're the host now", "The TV is the host again", "<Name> is the host now") are told
+ *   at once, because the host controls appear or vanish at once.
+ * - "TV disconnected" / "TV reconnected" are told only once the change has stood for NOTICE_HOLD_MS,
+ *   and then as the net change since the player was last told, so a quick TV reload says nothing.
+ *   The window starts at the first change and isn't extended by later ones; it's cancelled as soon as
+ *   the TV is back to what the player was told.
+ * - A host notice doesn't cancel a pending TV notice (you may become host because the TV left; the TV
+ *   notice still resolves by net change at its due time), except that "The TV is the host again" with
+ *   the TV back already says the TV returned, so it absorbs the pending "TV reconnected". In the
+ *   (timer-slack) case where a host notice and a due TV notice land on the same update, the host
+ *   notice wins and the TV change is absorbed rather than told right on top of it.
+ * The game ending, the socket dropping or a new session drops anything pending.
+ * Call on every room update and again once `now >= due` (the caller owns the timer; use a
+ * monotonic clock).
+ */
+export function trackNotice(
+  t: NoticeTracker,
+  s: NoticeInput,
+  now: number,
+): { tracker: NoticeTracker; notice: RoomNoticeKind | null } {
+  const { baseline } = observeRoom(t.told, s);
+  // Not observable, or a fresh session: re-baseline and drop anything pending.
+  if (!baseline || !s.room || !s.youId || !t.told || t.told.session !== baseline.session) {
+    return { tracker: { told: baseline, due: null }, notice: null };
+  }
+  // Outside a game nothing is told and nothing stays pending.
+  if (t.told.phase !== "playing" || baseline.phase !== "playing") return { tracker: { told: baseline, due: null }, notice: null };
+
+  const host = hostNotice(t.told.hostId, s.room, s.youId);
+  const absorbed = host === "host-tv" && baseline.mode === "screen";
+  const told: NoticeBaseline = { ...baseline, mode: absorbed ? baseline.mode : t.told.mode };
+  // TV state is what the player was told (incl. a change undone in time): nothing pending.
+  if (told.mode === baseline.mode) return { tracker: { told, due: null }, notice: host };
+  const due = t.due ?? now + NOTICE_HOLD_MS;
+  if (now < due) return { tracker: { told, due }, notice: host };
+  if (host) return { tracker: { told: baseline, due: null }, notice: host };
+  return { tracker: { told: baseline, due: null }, notice: baseline.mode === "phones" ? "tv-lost" : "tv-back" };
 }
