@@ -75,12 +75,12 @@ describe("worker", () => {
     try {
       const { code } = await createRoom();
       const { ws, messages } = await open(code);
-      for (let i = 0; i < 200; i++) ws.send("not json {");
+      for (let i = 0; i < 400; i++) ws.send("not json {");
       await vi.waitFor(() => expect(messages.length).toBeGreaterThanOrEqual(MESSAGE_RATE.burst));
       // Let any straggling replies land, then check the excess got no reply at all.
       await new Promise((r) => setTimeout(r, 100));
-      expect(messages.length).toBeLessThan(150);
-      // The log limited itself too: 200 rejections, far fewer lines.
+      expect(messages.length).toBeLessThan(300);
+      // The log limited itself too: 400 rejections, far fewer lines.
       const lines = warn.mock.calls.map((c) => String(c[0])).filter((l) => l.includes(`"room":"${code}"`));
       expect(lines.length).toBeLessThan(40);
       // Still open: a short burst is dropped, not punished.

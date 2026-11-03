@@ -51,11 +51,22 @@ export class RejectLog {
       this.suppressed++;
       return;
     }
-    const line: Record<string, unknown> = { ev: "reject", room: this.room, ...r };
+    const line: Record<string, unknown> = { ev: "reject", room: this.room, ...r, conn: printable(r.conn) };
     if (this.suppressed) line.suppressed = this.suppressed;
     this.suppressed = 0;
     this.sink(JSON.stringify(line));
   }
+}
+
+/** Longest connection id written to logs. Real ids are UUIDs (36 chars); clients can pick their own via `_pk`. */
+export const CONN_LOG_MAX = 64;
+
+/**
+ * A client-chosen string made safe for a log line: control, format, separator and other non-printable
+ * characters removed, then cut to `max` code points.
+ */
+export function printable(v: string, max = CONN_LOG_MAX): string {
+  return Array.from(v.replace(/[\p{C}\p{Zl}\p{Zp}]/gu, "")).slice(0, max).join("");
 }
 
 /** A short identifier-like label from untrusted input, or "?" — so logs never echo arbitrary client text. */
@@ -65,13 +76,14 @@ export function label(v: unknown): string {
 
 /**
  * Per-connection message budget. Sized from what a fast Doodle Dash drawer sends: DrawPad flushes a
- * strokeAppend every 40 ms (25/s) plus a strokeBegin per new stroke (rapid dabbing ≈ 10/s), so ~35/s
- * sustained; and right after a reconnect the client Outbox replays up to 50 queued actions plus hello
- * at once. Refill 40/s and burst 80 leave headroom for both.
+ * strokeAppend every 40 ms (25/s) plus a strokeBegin per new stroke, about 25 + 2·strokes/s, so up to
+ * ~45/s when dabbing; on top of that a client `resync` roughly every 1.5 s and the odd guess. Right
+ * after a reconnect the client Outbox replays up to 50 queued actions plus hello at once. Refill 60/s
+ * and burst 120 leave a third more than the fastest real drawer, so honest clients never see a drop.
  */
 export const MESSAGE_RATE = {
-  burst: 80,
-  perSec: 40,
+  burst: 120,
+  perSec: 60,
   /** A connection that keeps dropping messages for this long is closed. */
   abuseMs: 5_000,
   /** A gap this long without a drop ends an over-limit streak. */
