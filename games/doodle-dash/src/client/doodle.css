@@ -98,6 +98,15 @@
 html.dd-no-overscroll, html.dd-no-overscroll body { overscroll-behavior: none; }
 .dd-secret { margin: 0; text-align: center; font: 600 1.15rem var(--font-display); }
 .dd-secret strong { color: var(--warn); font-size: 1.6rem; }
+/*
+ * The drawer's word stays on one line of fixed height, whatever its length, so the feed and canvas
+ * below keep their size (--dd-fixed counts this line once). useFitWord (fitWord.ts) shrinks the
+ * word via --dd-word-scale, then hides the "Draw:" label (.dd-sr-only: screen readers still get it), and only
+ * as a last resort lets it wrap: the secret word is never truncated.
+ */
+.dd-phone-draw .dd-secret { min-width: 0; height: 1.9rem; line-height: 1.9rem; white-space: nowrap; }
+.dd-phone-draw .dd-secret strong { font-size: calc(1.6rem * var(--dd-word-scale, 1)); }
+.dd-phone-draw .dd-secret[data-fit="wrap"] { height: auto; line-height: 1.15; white-space: normal; overflow-wrap: anywhere; }
 .dd-title { text-align: center; }
 .dd-choices { display: grid; gap: var(--space-3); }
 .dd-note { margin: 0; text-align: center; color: var(--text-dim); font: 600 1.15rem var(--font-display); }
@@ -198,7 +207,7 @@ html.dd-no-overscroll, html.dd-no-overscroll body { overscroll-behavior: none; }
   .dd-phone-draw-feed .dd-round { grid-area: round; align-self: end; font-size: 1.05rem; }
   .dd-phone-draw-feed .dd-myscore { grid-area: score; align-self: end; font-size: 1.05rem; }
   .dd-phone-draw-feed .dd-phone-top > :last-child { grid-area: timer; align-self: center; }
-  .dd-phone-draw-feed .dd-secret { grid-area: word; text-align: left; overflow-wrap: anywhere; }
+  .dd-phone-draw-feed .dd-secret { grid-area: word; text-align: left; }
   .dd-phone-draw-feed .dd-feed { grid-area: feed; }
   .dd-phone-draw-feed .dd-pad { grid-area: pad; gap: 6px; }
   .dd-phone-draw-feed .dd-swatch { height: 44px; }
@@ -231,8 +240,8 @@ html.dd-no-overscroll, html.dd-no-overscroll body { overscroll-behavior: none; }
   .dd-phone-draw .dd-canvas-cell { grid-area: canvas; }
   .dd-phone-draw:has(~ .host-bar) .dd-canvas-cell { padding-bottom: 60px; }
   .dd-phone-draw .dd-canvas-draw { width: min(100%, (100vh - 12px) * 4 / 3); width: min(100cqw, 100cqh * 4 / 3); }
-  .dd-phone-draw .dd-secret { grid-area: word; font-size: 1rem; line-height: 1.2; overflow-wrap: anywhere; }
-  .dd-phone-draw .dd-secret strong { font-size: 1.3rem; }
+  .dd-phone-draw .dd-secret { grid-area: word; font-size: 1rem; height: 1.6rem; line-height: 1.6rem; }
+  .dd-phone-draw .dd-secret strong { font-size: calc(1.3rem * var(--dd-word-scale, 1)); }
   .dd-phone-draw .dd-palette { grid-area: palette; display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 4px; overflow: visible; touch-action: manipulation; }
   .dd-phone-draw .dd-swatch { width: auto; min-width: 0; height: 44px; }
   .dd-phone-draw .dd-toolrow { grid-area: tools; grid-auto-flow: row; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 4px; overflow: visible; }

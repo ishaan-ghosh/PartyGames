@@ -10,8 +10,8 @@ async function joinPhone(browser: Browser, code: string, name: string): Promise<
   return page;
 }
 
-async function inkedPixels(page: Page): Promise<number> {
-  return page.getByTestId("screen-canvas").evaluate((c: HTMLCanvasElement) => {
+async function inkedPixels(page: Page, canvasTestId = "screen-canvas"): Promise<number> {
+  return page.getByTestId(canvasTestId).evaluate((c: HTMLCanvasElement) => {
     const d = c.getContext("2d")!.getImageData(0, 0, c.width, c.height).data;
     let n = 0;
     // Count only opaque, non-white pixels: an unpainted (transparent) canvas must not count as ink.
@@ -87,6 +87,45 @@ test("phones-only: the host starts from a phone and guessers see the canvas", as
 
   await expect(host.getByTestId("word-choice")).toHaveCount(3);
   await expect(guest.getByTestId("phone-canvas")).toBeVisible();
+});
+
+test("phones-only: a sideways drawer sees guesses beside the canvas and its strokes reach guessers", async ({ browser }) => {
+  // A small phone held sideways: the drawer gets the landscape layout, not a "rotate" overlay.
+  const host = await (await browser.newContext({ ...devices["Pixel 7"], viewport: { width: 667, height: 375 } })).newPage();
+  await host.goto("/");
+  await host.getByTestId("host-phone").click();
+  await host.getByTestId("name-input").fill("Host");
+  await host.getByTestId("join-submit").click();
+  await expect(host.getByTestId("phone-lobby")).toBeVisible();
+  const code = new URL(host.url()).pathname.split("/").pop()!;
+
+  const guest = await joinPhone(browser, code, "Guest");
+  await host.getByTestId("start-game").click();
+  await host.getByTestId("word-choice").first().click();
+  await expect(host.getByTestId("secret-word")).toBeVisible();
+  await expect(host.getByTestId("rotate-hint")).toHaveCount(0);
+
+  // The feed sits in the right-hand column, beside (not above) the canvas, with room for a line.
+  const feed = host.locator(".dd-phone-draw .dd-feed");
+  await expect(feed).toBeVisible();
+  const canvas = host.getByTestId("draw-canvas");
+  const feedBox = (await feed.boundingBox())!;
+  const box = (await canvas.boundingBox())!;
+  expect(feedBox.x).toBeGreaterThanOrEqual(box.x + box.width);
+  expect(feedBox.height).toBeGreaterThanOrEqual(24);
+
+  // A wrong guess from the other phone shows up in the drawer's feed.
+  await guest.getByTestId("guess-input").fill("blorptastic");
+  await guest.getByTestId("guess-input").press("Enter");
+  await expect(feed).toContainText("Guest: blorptastic");
+
+  // A stroke on the sideways canvas reaches the guesser's canvas.
+  await expect(guest.getByTestId("phone-canvas")).toBeVisible();
+  await host.mouse.move(box.x + box.width * 0.2, box.y + box.height * 0.2);
+  await host.mouse.down();
+  for (let i = 1; i <= 12; i++) await host.mouse.move(box.x + box.width * (0.2 + i * 0.05), box.y + box.height * (0.2 + i * 0.04));
+  await host.mouse.up();
+  await expect.poll(() => inkedPixels(guest, "phone-canvas"), { timeout: 5000 }).toBeGreaterThan(200);
 });
 
 test("the host kicks players from the lobby and during a game", async ({ browser }) => {
