@@ -1,13 +1,23 @@
 import type { GameMeta, RoomSnapshot, You } from "@party/shared";
 import type { ComponentType } from "react";
 
+/**
+ * Marks an action as independent of the actions around it (e.g. a guess), so it can wait out a reconnect
+ * on its own for up to `keepMs`. After the reconnect it's sent only if `stillValid` passes for the first
+ * fresh view. Without options, actions are ordered and only survive a brief reconnect, all or nothing.
+ */
+export interface SendOptions {
+  keepMs: number;
+  stillValid?: (view: unknown) => boolean;
+}
+
 export interface GameClientProps<V = unknown> {
   view: V;
   room: RoomSnapshot;
   you: You;
   isHost: boolean;
   mode: "screen" | "phones";
-  send(action: unknown): void;
+  send(action: unknown, opts?: SendOptions): void;
   onEvent(cb: (payload: unknown) => void): () => void;
   serverNow(): number;
   soundOn: boolean;

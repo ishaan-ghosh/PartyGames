@@ -16,4 +16,4 @@ export { MuteToggle } from "./MuteToggle";
 export { AVATAR_COLORS, AVATAR_EMOJI, randomAvatar } from "./avatars";
 export { isMuted, playSound, setMuted, unlockAudio, type SoundName } from "./sound";
 export { useWakeLock } from "./useWakeLock";
-export type { ClientGame, GameClientProps, SettingsFormProps } from "./game-client";
+export type { ClientGame, GameClientProps, SendOptions, SettingsFormProps } from "./game-client";

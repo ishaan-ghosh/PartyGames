@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { Outbox } from "./outbox";
+import { LOOSE_LIMIT, Outbox } from "./outbox";
 
 const collect = () => {
   const sent: string[] = [];
@@ -164,6 +164,152 @@ describe("Outbox.sendNow (never queued)", () => {
     expect(ob.sendNow("skip")).toBe(false);
     open = true;
     ob.welcome();
+    expect(sent).toEqual([]);
+  });
+});
+
+describe("Outbox loose sends (independent actions such as guesses)", () => {
+  const loose = (keepMs = 20_000, stillValid?: (v: unknown) => boolean) => ({ keepMs, stillValid });
+
+  it("keeps a loose message past the ordered time-to-live and sends it once synced", () => {
+    const { sent, transmit } = collect();
+    let t = 0;
+    const ob = new Outbox(transmit, 50, 2000, () => t);
+    ob.send("guess", loose());
+    t = 10_000;
+    ob.welcome();
+    expect(sent).toEqual([]); // waits for the post-welcome view
+    ob.synced({});
+    expect(sent).toEqual(["guess"]);
+  });
+
+  it("drops only the stale ordered messages, not a fresh loose one", () => {
+    const { sent, transmit } = collect();
+    let t = 0;
+    const ob = new Outbox(transmit, 50, 2000, () => t);
+    ob.send("begin");
+    ob.send("append");
+    ob.send("guess", loose());
+    t = 5000;
+    ob.welcome();
+    ob.synced({});
+    expect(sent).toEqual(["guess"]);
+  });
+
+  it("still flushes fresh ordered messages on welcome, before the sync", () => {
+    const { sent, transmit } = collect();
+    const ob = new Outbox(transmit);
+    ob.send("guess", loose());
+    ob.send("begin");
+    ob.welcome();
+    expect(sent).toEqual(["begin"]);
+    ob.synced({});
+    expect(sent).toEqual(["begin", "guess"]);
+  });
+
+  it("drops a loose message older than its own keepMs", () => {
+    const { sent, transmit } = collect();
+    let t = 0;
+    const ob = new Outbox(transmit, 50, 2000, () => t);
+    ob.send("old", loose(20_000));
+    t = 15_000;
+    ob.send("new", loose(20_000));
+    t = 20_001;
+    ob.welcome();
+    ob.synced({});
+    expect(sent).toEqual(["new"]);
+  });
+
+  it("drops a loose message whose check fails against the fresh view (e.g. a later turn)", () => {
+    const { sent, transmit } = collect();
+    const ob = new Outbox(transmit);
+    ob.send("turn1", loose(20_000, (v) => (v as { turn: number }).turn === 1));
+    ob.send("turn2", loose(20_000, (v) => (v as { turn: number }).turn === 2));
+    ob.welcome();
+    ob.synced({ turn: 2 });
+    expect(sent).toEqual(["turn2"]);
+  });
+
+  it("drops a checked loose message when the sync has no view (back in the lobby)", () => {
+    const { sent, transmit } = collect();
+    const ob = new Outbox(transmit);
+    ob.send("checked", loose(20_000, () => true));
+    ob.send("unchecked", loose());
+    ob.welcome();
+    ob.synced(null);
+    expect(sent).toEqual(["unchecked"]);
+  });
+
+  it("holds loose sends between welcome and sync, then sends directly", () => {
+    const { sent, transmit } = collect();
+    const ob = new Outbox(transmit);
+    ob.welcome();
+    ob.send("g1", loose());
+    expect(sent).toEqual([]);
+    ob.synced({});
+    expect(sent).toEqual(["g1"]);
+    ob.send("g2", loose());
+    expect(sent).toEqual(["g1", "g2"]);
+    ob.synced({}); // later views don't resend anything
+    expect(sent).toEqual(["g1", "g2"]);
+  });
+
+  it("requires a fresh sync after each reconnect", () => {
+    const { sent, transmit } = collect();
+    const ob = new Outbox(transmit);
+    ob.welcome();
+    ob.synced({});
+    ob.closed();
+    ob.send("g", loose(20_000, (v) => v === "same"));
+    ob.welcome();
+    expect(sent).toEqual([]);
+    ob.synced("other");
+    expect(sent).toEqual([]);
+  });
+
+  it("is not affected by an ordered overflow, and ordered sends aren't affected by loose ones", () => {
+    const { sent, transmit } = collect();
+    const ob = new Outbox(transmit, 2);
+    for (const m of ["begin", "a1", "a2"]) ob.send(m);
+    ob.send("guess", loose());
+    ob.send("a3"); // discarded: ordered overflow
+    ob.welcome();
+    ob.synced({});
+    expect(sent).toEqual(["guess"]);
+  });
+
+  it("caps loose messages by dropping the oldest", () => {
+    const { sent, transmit } = collect();
+    const ob = new Outbox(transmit);
+    for (let i = 0; i < LOOSE_LIMIT + 3; i++) ob.send(`g${i}`, loose());
+    ob.welcome();
+    ob.synced({});
+    expect(sent).toHaveLength(LOOSE_LIMIT);
+    expect(sent[0]).toBe("g3");
+    expect(sent.at(-1)).toBe(`g${LOOSE_LIMIT + 2}`);
+  });
+
+  it("keeps a loose message queued if the transport can't send it on sync", () => {
+    const sent: string[] = [];
+    let open = false;
+    const ob = new Outbox((m) => (open ? (sent.push(m), true) : false));
+    ob.welcome();
+    ob.synced({});
+    ob.send("g", loose());
+    expect(sent).toEqual([]);
+    open = true;
+    ob.welcome();
+    ob.synced({});
+    expect(sent).toEqual(["g"]);
+  });
+
+  it("discards loose messages on clear", () => {
+    const { sent, transmit } = collect();
+    const ob = new Outbox(transmit);
+    ob.send("g", loose());
+    ob.clear();
+    ob.welcome();
+    ob.synced({});
     expect(sent).toEqual([]);
   });
 });
